@@ -1,0 +1,433 @@
+:root {
+  --color-bg: #eef2f7;
+  --color-surface: #ffffff;
+  --color-border: #d7e0ea;
+  --color-text: #1b2733;
+  --color-text-muted: #5b6b7c;
+  --color-accent: #185184;
+  --color-accent-dark: #113B61;
+  --color-danger: #dc2626;
+  --color-deceased: #8291a3;
+  --color-on-accent: #ffffff;
+  --color-hover: #e3ecf7;
+  --color-hover-subtle: #f3f7fc;
+  --color-tint: #dbe7f5;
+  --color-deceased-bg: #e4e9ef;
+  /* Warm contrast to --color-tint's cool blue, so the calendar's birthday
+     vs. anniversary tags stay visually distinct regardless of the accent
+     color in use. */
+  --color-anniversary-bg: #f5e6c8;
+  --color-danger-bg: #fdecec;
+  --color-danger-border: #f8d7d7;
+  --shadow-color: rgba(15, 23, 42, 0.08);
+  --modal-backdrop: rgba(15, 23, 42, 0.45);
+  --modal-shadow-color: rgba(15, 23, 42, 0.25);
+  --radius: 8px;
+  --shadow: 0 1px 3px var(--shadow-color);
+  --modal-box-shadow: 0 8px 30px var(--modal-shadow-color);
+  font-size: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.hidden { display: none !important; }
+
+button, input, select, textarea { font-family: inherit; font-size: 1rem; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--color-hover); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
+.btn--primary:hover { background: var(--color-accent-dark); }
+.btn--danger { background: var(--color-danger); color: var(--color-on-accent); border-color: var(--color-danger); }
+.btn--small { padding: 4px 10px; font-size: 0.85rem; }
+.btn--edit { padding: 4px 10px; font-size: 0.85rem; background: var(--color-hover-subtle);}
+.btn--link { background: none; border: none; color: var(--color-accent); text-decoration: underline; padding: 2px 4px; }
+
+/* ---------- Landing ---------- */
+.landing-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.landing-card {
+  background: var(--color-surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 48px;
+  max-width: 560px;
+  text-align: center;
+}
+.landing-card h1 { margin-top: 0; }
+.landing-card p.subhead { color: var(--color-text-muted); margin-bottom: 32px; }
+.landing-options { display: flex; flex-direction: column; gap: 12px; }
+.landing-option {
+  display: block;
+  width: 100%;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+}
+.landing-option:hover { border-color: var(--color-accent); background: var(--color-hover-subtle); }
+.landing-option strong { display: block; margin-bottom: 4px; }
+.landing-option span { color: var(--color-text-muted); font-size: 0.9rem; }
+.landing-error { color: var(--color-danger); margin-top: 16px; }
+.landing-note { color: var(--color-text-muted); font-size: 0.85rem; margin-top: 20px; }
+
+/* ---------- App shell ---------- */
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 20px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+.app-header__brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.dirty-indicator { color: var(--color-text-muted); font-size: 0.85rem; font-weight: 500; }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; flex-shrink: 0;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-surface); color: var(--color-text-muted); cursor: pointer;
+}
+.icon-btn:hover { background: var(--color-hover); color: var(--color-text); }
+.icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.main-nav { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+.main-nav button {
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.main-nav button:hover { background: var(--color-hover); }
+.main-nav button.active { background: var(--color-accent); color: var(--color-on-accent); }
+.app-header__actions { display: flex; gap: 8px; align-items: center; }
+.lang-switcher { padding: 6px; border-radius: var(--radius); border: 1px solid var(--color-border); }
+
+.view-root { flex: 1; padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
+.view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+.view-header h2 { margin: 0; }
+
+/* ---------- Cards / person tiles ---------- */
+.person-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.person-card:hover { border-color: var(--color-accent); }
+.person-photo {
+  width: 48px; height: 48px; border-radius: 50%; object-fit: cover;
+  background: var(--color-tint); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; line-height: 1.1;
+  color: var(--color-text-muted); font-size: 0.7rem; overflow: hidden;
+}
+.person-photo img { width: 100%; height: 100%; object-fit: cover; }
+button.person-photo { border: none; padding: 0; font: inherit; }
+button.person-photo--clickable { cursor: pointer; }
+button.person-photo--clickable:hover { box-shadow: 0 0 0 3px var(--color-hover); }
+.person-card__name { font-weight: 600; display: block; }
+.person-card__meta { font-size: 0.85rem; color: var(--color-text-muted); display: block; }
+.person-card-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.compact-list { list-style: none; padding: 0; margin: 0; }
+.compact-list li { padding: 4px 0; border-bottom: 1px solid var(--color-border); }
+
+/* ---------- Focus view ---------- */
+.focus-search { margin-bottom: 20px; position: relative; max-width: 420px; }
+.focus-search input {
+  width: 100%; padding: 10px 44px 10px 12px;
+  border-radius: var(--radius); border: 1px solid var(--color-border);
+}
+/* "Add person" as a trailing button inside the search field itself — one
+   unified control (look someone up, or add them right here if they're
+   not found) instead of a separate button floating up in the page header
+   with no visual relationship to the search box. */
+.focus-search__add {
+  position: absolute; top: 50%; right: 5px; transform: translateY(-50%);
+  width: 32px; height: 32px; border: none; border-radius: var(--radius);
+  background: var(--color-accent); color: var(--color-on-accent);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.focus-search__add:hover { background: var(--color-accent-dark); }
+.focus-search__results {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius); max-height: 280px; overflow-y: auto; box-shadow: var(--shadow);
+}
+.focus-search__results button {
+  display: block; width: 100%; text-align: left; padding: 10px 12px;
+  border: none; background: none; cursor: pointer; border-bottom: 1px solid var(--color-border);
+}
+.focus-search__results button:hover { background: var(--color-hover); }
+
+.focus-layout { display: flex; flex-direction: column; gap: 24px; }
+.focus-section h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); margin-bottom: 10px; }
+.focus-row { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
+
+.focus-center {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  /* Extra right padding reserves room for the absolutely-positioned
+     ⋮ menu button so it never overlaps the name/facts text — the info
+     block's flex layout stops at the padding edge, not the border edge. */
+  padding: 24px 56px 24px 24px;
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  position: relative;
+}
+.focus-center .person-photo { width: 96px; height: 96px; font-size: 0.9rem; }
+.focus-center__info h2 { margin: 0 0 6px 0; }
+.focus-center__facts { color: var(--color-text-muted); margin: 4px 0; }
+.focus-center__notes { margin-top: 10px; white-space: pre-wrap; }
+.focus-center__menu-btn {
+  position: absolute; top: 16px; right: 16px;
+  width: 32px; height: 32px; border-radius: 50%; border: none; background: none;
+  font-size: 1.3rem; line-height: 1; cursor: pointer; color: var(--color-text-muted);
+  display: flex; align-items: center; justify-content: center;
+}
+.focus-center__menu-btn:hover { background: var(--color-hover); color: var(--color-text); }
+.focus-center__dropdown {
+  position: absolute; top: 52px; right: 16px; z-index: 20;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius); box-shadow: var(--shadow); min-width: 200px; overflow: hidden;
+}
+.focus-center__dropdown.hidden { display: none; }
+.focus-center__dropdown button {
+  display: block; width: 100%; text-align: left; padding: 10px 14px; border: none;
+  background: none; cursor: pointer; font-size: 0.95rem; color: var(--color-text);
+}
+.focus-center__dropdown button:hover { background: var(--color-hover); }
+.focus-center__dropdown button.focus-center__dropdown-danger { color: var(--color-danger); }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem;
+  background: var(--color-tint); color: var(--color-accent-dark); margin-left: 8px;
+}
+.badge--deceased { background: var(--color-deceased-bg); color: var(--color-deceased); }
+.union-block { border: 1px dashed var(--color-border); border-radius: var(--radius); padding: 10px; margin-bottom: 8px; }
+.union-block__label { font-size: 0.8rem; color: var(--color-text-muted); margin-bottom: 6px; }
+
+/* ---------- Full tree ---------- */
+.tree-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.tree-toolbar .icon-btn { width: 26px; height: 26px; }
+.tree-canvas-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  overflow: hidden;
+  height: 70vh;
+  position: relative;
+  box-shadow: var(--shadow);
+  cursor: grab;
+}
+.tree-canvas-wrap.dragging { cursor: grabbing; }
+.tree-canvas-wrap svg { width: 100%; height: 100%; display: block; }
+/* Tree nodes are plain SVG shapes (not HTML-in-foreignObject) so the frame
+   reliably survives Chrome's print/PDF pipeline, which can silently drop
+   CSS borders on foreignObject content in the printed output even though
+   it renders fine on screen. */
+.tree-node-frame { fill: var(--color-surface); stroke: var(--color-border); }
+.tree-node:hover .tree-node-frame { stroke: var(--color-accent); }
+.tree-node-photo-bg { fill: var(--color-tint); }
+.tree-photo-label {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 9px; fill: var(--color-text-muted);
+}
+.tree-node-name {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px; font-weight: 600; fill: var(--color-text);
+}
+.tree-node-meta {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 11px; fill: var(--color-text-muted);
+}
+.tree-link { fill: none; stroke: var(--color-deceased); stroke-width: 1.5px; }
+.tree-hint { color: var(--color-text-muted); font-size: 0.85rem; margin-top: 8px; }
+
+/* ---------- Tree person filter modal ---------- */
+.filter-toolbar-hint { font-size: 0.8rem; color: var(--color-text-muted); }
+.filter-search { width: 100%; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius); margin-bottom: 10px; }
+.filter-bulk-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+.filter-person-list { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius); }
+.filter-person-list li { border-bottom: 1px solid var(--color-border); }
+.filter-person-list li:last-child { border-bottom: none; }
+.filter-person-list label { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; }
+.filter-person-list label:hover { background: var(--color-hover); }
+.filter-person-list .filter-person-meta { color: var(--color-text-muted); font-size: 0.85rem; }
+.filter-person-list li.filter-hidden-row { display: none; }
+
+/* ---------- Tables ---------- */
+table.data-table { width: 100%; border-collapse: collapse; background: var(--color-surface); border-radius: var(--radius); overflow: hidden; }
+table.data-table th, table.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); text-align: left; }
+table.data-table th { cursor: pointer; color: var(--color-text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; }
+table.data-table tbody tr:hover { background: var(--color-hover-subtle); }
+.search-bar { margin-bottom: 16px; max-width: 360px; }
+.search-bar input { width: 100%; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--color-border); }
+
+/* Shared rounded-corner box for any plain row list (Birthdays,
+   Anniversaries, Relationships) — same visual recipe as table.data-table
+   above, so every list-style view reads as one consistent system rather
+   than some being boxed cards and others bare rows. Only wraps actual
+   content; empty states stay plain unboxed notes, same as the table. */
+.boxed-list {
+  list-style: none; margin: 0; padding: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+/* Fallback for a plain <li> with no other row styling of its own
+   (e.g. the unknown-birthdays list) — .date-row and .relationship-bucket
+   li already carry equivalent padding/border/hover for their own rows. */
+.boxed-list li { padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
+.boxed-list li:hover { background: var(--color-hover-subtle); }
+.boxed-list > li:last-child, .boxed-list > .date-row:last-child { border-bottom: none; }
+
+/* ---------- Calendar / anniversaries ---------- */
+.list-section { margin-bottom: 28px; }
+.list-section h3 { margin-bottom: 10px; }
+.date-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); }
+.date-row:hover { background: var(--color-hover-subtle); }
+.date-row > *:nth-child(2) { flex: 1; }
+.date-row > *:last-child { flex-shrink: 0; text-align: right; }
+.date-row__date { color: var(--color-text-muted); font-size: 0.85rem; min-width: 90px; flex-shrink: 0; }
+/* Only anniversaries' names carry their own data-goto (two people share
+   one row there, so the row itself can't be the click target — see
+   anniversaries.js); calendar's name span has no data-goto of its own
+   since the whole row is already the target there, so this rule leaves
+   it untouched. */
+.date-row__name[data-goto]:hover { text-decoration: underline; color: var(--color-accent-dark); }
+.empty-note { color: var(--color-text-muted); font-style: italic; padding: 12px 0; }
+
+/* ---------- Combined events calendar ---------- */
+.events-cal-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.events-cal-toolbar .no-print { display: flex; gap: 8px; }
+.events-cal-toolbar__month { font-weight: 600; font-size: 1.05rem; min-width: 160px; }
+.events-cal-legend { display: flex; gap: 18px; margin-bottom: 14px; font-size: 0.85rem; color: var(--color-text-muted); flex-wrap: wrap; }
+.events-cal-legend__dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; border: 1px solid var(--color-text);}
+.events-cal-legend__dot--birthday { background: var(--color-danger-bg); }
+.events-cal-legend__dot--anniversary { background: var(--color-anniversary-bg); }
+.events-cal-legend__dot--remembered { background: var(--color-deceased-bg); }
+.events-cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+  background: var(--color-border); border: 1px solid var(--color-border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.events-cal-weekday {
+  background: var(--color-surface); padding: 8px; text-align: center;
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--color-text-muted); font-weight: 600;
+}
+.events-cal-day {
+  background: var(--color-surface); min-height: 76px; padding: 6px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.events-cal-day.is-empty { background: var(--color-bg); }
+.events-cal-day.is-today { background: var(--color-tint); }
+.events-cal-day__number { font-size: 0.8rem; color: var(--color-text-muted); font-weight: 600; }
+.events-cal-day.is-today .events-cal-day__number { color: var(--color-accent-dark); }
+.events-cal-tag {
+  display: block; width: 100%; text-align: left; font-size: 0.7rem;
+  padding: 2px 5px; border-radius: 4px; border: none; cursor: pointer;
+  line-height: 1.3; color: var(--color-accent-dark); overflow-wrap: break-word;
+}
+.events-cal-tag--birthday { background: var(--color-danger-bg); }
+.events-cal-tag--anniversary { background: var(--color-anniversary-bg); }
+.events-cal-tag--remembered { background: var(--color-deceased-bg); color: var(--color-deceased); }
+
+/* ---------- Stats ---------- */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.stat-tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 18px; }
+.stat-tile__value { font-size: 1.8rem; font-weight: 700; color: var(--color-accent-dark); }
+.stat-tile__label { color: var(--color-text-muted); font-size: 0.85rem; margin-top: 4px; }
+
+/* ---------- Relationships view ---------- */
+.relationship-bucket { margin-bottom: 22px; }
+.relationship-bucket h3 { margin-bottom: 8px; }
+.relationship-bucket ul { list-style: none; padding: 0; margin: 0; }
+.relationship-bucket li { padding: 8px 12px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; }
+.relationship-bucket li:hover { background: var(--color-hover-subtle); }
+/* ---------- Modal ---------- */
+.modal-root {
+  position: fixed; inset: 0; background: var(--modal-backdrop);
+  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+}
+.modal-box {
+  background: var(--color-surface); border-radius: 12px; max-width: 640px; width: 100%;
+  max-height: 90vh; overflow-y: auto; padding: 28px; box-shadow: var(--modal-box-shadow);
+}
+.modal-box h3 { margin-top: 0; }
+.modal-box--photo {
+  max-width: min(90vw, 800px); padding: 0; background: transparent; box-shadow: none;
+  overflow: visible; position: relative;
+}
+.photo-lightbox-img { display: block; max-width: 100%; max-height: 85vh; border-radius: 12px; margin: 0 auto; }
+.photo-lightbox-close {
+  position: absolute; top: -16px; right: -16px; width: 36px; height: 36px; border-radius: 50%;
+  border: none; background: var(--color-surface); color: var(--color-text); font-size: 1.3rem; line-height: 1;
+  cursor: pointer; box-shadow: var(--shadow); display: flex; align-items: center; justify-content: center;
+}
+.photo-lightbox-close:hover { background: var(--color-hover); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-grid .full-width { grid-column: 1 / -1; }
+.form-field label { display: block; font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 4px; }
+.form-field input, .form-field select, .form-field textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius);
+}
+.date-fields { display: flex; gap: 6px; }
+.date-fields input { width: 70px; }
+.date-fields select { width: 130px; }
+.checkbox-field { display: flex; align-items: center; gap: 8px; }
+.checkbox-field input { width: auto; }
+.photo-upload { display: flex; align-items: center; gap: 12px; }
+.photo-upload .person-photo { width: 64px; height: 64px; }
+.impact-list { background: var(--color-danger-bg); border: 1px solid var(--color-danger-border); border-radius: var(--radius); padding: 10px 14px; margin: 12px 0; }
+.impact-list li { margin-bottom: 4px; }
+fieldset { border: 1px solid var(--color-border); border-radius: var(--radius); margin: 0 0 16px 0; }
+legend { padding: 0 6px; color: var(--color-text-muted); font-size: 0.85rem; }
+.rel-existing-list { list-style: none; padding: 0; margin: 0 0 10px 0; }
+.rel-existing-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+.rel-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.rel-add-row select { padding: 6px; border-radius: var(--radius); border: 1px solid var(--color-border); }
+.rel-inline-label { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-text-muted); }

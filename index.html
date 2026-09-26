@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Family Tree</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/print.css" media="print">
+</head>
+<body>
+
+<div id="landing-screen" class="landing-screen"></div>
+
+<div id="app-shell" class="app-shell hidden">
+  <header class="app-header no-print">
+    <div class="app-header__brand">
+      <span id="app-title" class="app-header__title"></span>
+    </div>
+    <nav id="main-nav" class="main-nav"></nav>
+    <div class="app-header__actions">
+      <select id="lang-switcher" class="lang-switcher hidden"></select>
+      <span id="dirty-indicator" class="dirty-indicator hidden"></span>
+      <button id="btn-save" class="icon-btn" type="button">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+          <path d="M8 3v5h8V3"/>
+          <path d="M7 21v-7h10v7"/>
+        </svg>
+      </button>
+      <button id="btn-export" class="icon-btn" type="button">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v11"/>
+          <path d="M8 7l4-4 4 4"/>
+          <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="view-root" class="view-root"></main>
+</div>
+
+<div id="modal-root" class="modal-root hidden"></div>
+
+<script src="js/settings.js"></script>
+<script src="i18n/de.js"></script>
+<script src="i18n/en.js"></script>
+<script src="i18n/it.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/data-model.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/image-utils.js"></script>
+<script src="js/date-fields.js"></script>
+<script src="js/ui-helpers.js"></script>
+<script src="js/views/landing.js"></script>
+<script src="js/views/person-form.js"></script>
+<script src="js/views/relationship-editor.js"></script>
+<script src="js/views/focus.js"></script>
+<script src="js/views/tree.js"></script>
+<script src="js/views/calendar.js"></script>
+<script src="js/views/events-calendar.js"></script>
+<script src="js/views/contacts.js"></script>
+<script src="js/views/anniversaries.js"></script>
+<script src="js/views/stats.js"></script>
+<script src="js/views/relationships.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

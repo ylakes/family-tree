@@ -1,0 +1,42 @@
+/* Print stylesheet: each view hides its nav/controls (.no-print) and lays
+   out content to fit the page. Loaded only for @media print. */
+@media print {
+  @page { margin: 1.5cm; }
+
+  body { background: white; }
+
+  .no-print, .app-header, .modal-root { display: none !important;}
+
+  .view-root { padding: 0; max-width: 100%; margin: 0; }
+
+  .view-header { margin-bottom: 12px; }
+
+  .focus-layout { gap: 14px; }
+  .focus-center { border: none; padding: 0; page-break-inside: avoid;  box-shadow: none;}
+  .person-card { border: none; padding: 4px 0;  box-shadow: none;}
+  .person-card:hover { border: none; }
+
+  .tree-canvas-wrap {
+    height: auto;
+    overflow: visible;
+    border: none;
+    box-shadow: none;
+  }
+  .tree-canvas-wrap svg {
+    width: 100%;
+    height: auto;
+  }
+
+  table.data-table { font-size: 11px; }
+  table.data-table th, table.data-table td { padding: 4px 6px; }
+
+  .stats-grid { grid-template-columns: repeat(3, 1fr); }
+  .stat-tile { border: 1px solid #ccc; box-shadow: none; page-break-inside: avoid; }
+
+  .relationship-bucket, .list-section, .union-block { page-break-inside: avoid; }
+
+  .events-cal-grid { page-break-inside: avoid; }
+  .events-cal-day { page-break-inside: avoid; min-height: 60px; }
+
+  a, button { color: inherit; }
+}

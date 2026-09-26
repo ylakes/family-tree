@@ -1,0 +1,14 @@
+# OS / editor junk
+.DS_Store
+.Rhistory
+
+# Real family data stays local only - never commit personal data
+database/
+
+# Old scratch/experiment files, superseded by js/views/tree.js and css/style.css
+tree staggered lines 1.js
+tree staggered lines 2.js
+tree.js
+js/views/tree_old.js
+css/style copy.css
+css/theme-cool-blue-modern.css
