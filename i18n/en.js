@@ -144,7 +144,7 @@ window.I18N_DATA.en = {
     "zoomIn": "Zoom In",
     "zoomOut": "Zoom Out",
     "resetView": "Reset View",
-    "hint": "Scroll to zoom, drag to pan, click a person to display them",
+    "hint": "Scroll to zoom, drag to pan, click a person to display them. Point at a person or a line to highlight a family; click a line to keep it highlighted.",
     "filterPeople": "Select People",
     "filterModalTitle": "Show People in Family Tree",
     "filterSearch": "Search by name…",

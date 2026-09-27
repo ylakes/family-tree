@@ -61,6 +61,10 @@ function evaluate(data) {
     boxes.push({ id, x0: c.x - w / 2, y0: c.y - NODE_H / 2, x1: c.x + w / 2, y1: c.y + NODE_H / 2 });
   });
   const m = env.TreeTestLib.measure(boxes, r.links);
+  // Every crossing must be one the layout found and drew with a gap: the
+  // lines as actually drawn (with gaps) must not cross or touch at all.
+  const drawn = env.TreeTestLib.measure(boxes, r.links.map((l) => Object.assign({}, l, { rawSegs: null })));
+  m.unmarkedCrossings = drawn.crossings + drawn.touches + Math.abs(m.crossings - r.crossings.length);
   // Every same-row couple whose block is a simple chain should stand side by side.
   let apartCouples = 0;
   Object.values(data.unions).forEach((u) => {
@@ -74,14 +78,14 @@ function evaluate(data) {
 }
 
 var failures = 0;
-var totals = { crossings: 0, touches: 0, overlaps: 0, throughBox: 0, boxOverlaps: 0 };
+var totals = { crossings: 0, touches: 0, overlaps: 0, nearOverlaps: 0, throughBox: 0, boxOverlaps: 0 };
 function report(name, m) {
   Object.keys(totals).forEach((k) => { totals[k] += m[k]; });
-  const bad = m.overlaps + m.throughBox + m.boxOverlaps + m.touches;
+  const bad = m.overlaps + m.nearOverlaps + m.throughBox + m.boxOverlaps + m.touches + m.unmarkedCrossings;
   if (bad) failures += 1;
   const pad = (s, n) => (String(s) + ' '.repeat(n)).slice(0, n);
-  log(`${bad ? 'FAIL' : 'ok  '} ${pad(name, 34)} people=${pad(m.people, 4)} crossings=${pad(m.crossings, 3)} touches=${pad(m.touches, 3)} overlaps=${pad(m.overlaps, 3)} throughBox=${pad(m.throughBox, 3)} boxOverlaps=${pad(m.boxOverlaps, 3)} apartCouples=${pad(m.apartCouples, 2)} ${m.width}x${m.height} ${m.ms}ms`);
-  if (bad) log(`       examples: ${JSON.stringify({ touches: m.examples.touches, overlaps: m.examples.overlaps })}`);
+  log(`${bad ? 'FAIL' : 'ok  '} ${pad(name, 34)} people=${pad(m.people, 4)} crossings=${pad(m.crossings, 3)} touches=${pad(m.touches, 3)} overlaps=${pad(m.overlaps, 3)} near=${pad(m.nearOverlaps, 3)} throughBox=${pad(m.throughBox, 3)} boxOverlaps=${pad(m.boxOverlaps, 3)} apartCouples=${pad(m.apartCouples, 2)} unmarked=${pad(m.unmarkedCrossings, 2)} ${m.width}x${m.height} ${m.ms}ms`);
+  if (bad) log(`       examples: ${JSON.stringify({ touches: m.examples.touches, overlaps: m.examples.overlaps, near: m.examples.nearOverlaps })}`);
 }
 
 log('-- hand-built scenarios');
@@ -108,5 +112,5 @@ if (dataFile) {
 
 log('');
 log(`totals: ${JSON.stringify(totals)}`);
-log(failures ? `${failures} scenario(s) with overlapping/touching lines, lines through boxes or box overlaps` : 'no overlapping lines, no lines through boxes, no box overlaps');
+log(failures ? `${failures} scenario(s) with overlapping/touching lines, unmarked crossings, lines through boxes or box overlaps` : 'no overlapping or touching lines, every crossing marked, no lines through boxes, no box overlaps');
 if (IS_NODE && failures) process.exitCode = 1;

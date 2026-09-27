@@ -144,7 +144,7 @@ window.I18N_DATA.it = {
     "zoomIn": "Ingrandisci",
     "zoomOut": "Riduci",
     "resetView": "Reimposta Vista",
-    "hint": "Scorri per ingrandire, trascina per spostare, clicca su una persona per visualizzarla",
+    "hint": "Scorri per ingrandire, trascina per spostare, clicca su una persona per visualizzarla. Passa sopra una persona o una linea per evidenziare una famiglia; clicca su una linea per mantenerla evidenziata.",
     "filterPeople": "Seleziona Persone",
     "filterModalTitle": "Mostra Persone nell'Albero Genealogico",
     "filterSearch": "Cerca per nome…",

@@ -7,7 +7,8 @@ var TreeTestLib = (function () {
   // ---- Geometry metrics -------------------------------------------------
   //
   // Input: boxes [{id, x0, y0, x1, y1}] and links [{group, pair, segs:
-  // [[x1,y1,x2,y2], ...]}]. `group` identifies which family/couple a line
+  // [[x1,y1,x2,y2], ...]}] — a link's unbroken `rawSegs` are measured when
+  // present (the drawn `segs` have gaps where lines cross). `group` identifies which family/couple a line
   // belongs to; a family connector's `pair` equals its couple's marriage
   // group, so a drop starting on its own parents' marriage line is not
   // counted as touching a foreign line.
@@ -16,18 +17,20 @@ var TreeTestLib = (function () {
   //              (reads as if they were connected)
   //   overlaps:  two different groups' segments running along each other
   //              (the "lines on top of each other" defect)
+  //   nearOverlaps: two different groups' parallel segments running side
+  //              by side less than 6px apart (read as one line)
   //   throughBox: a segment passing through a person's box
   //   boxOverlaps: two boxes intersecting
   function measure(boxes, links) {
     const EPS = 0.5;
     const segs = [];
-    links.forEach((l) => l.segs.forEach((s) => {
+    links.forEach((l) => (l.rawSegs || l.segs).forEach((s) => {
       if (Math.abs(s[0] - s[2]) < 0.01 && Math.abs(s[1] - s[3]) < 0.01) return;
       segs.push({ s, g: l.group, pair: l.pair || l.group });
     }));
     const related = (a, b) => a.g === b.g || a.pair === b.g || b.pair === a.g;
     let crossings = 0, touches = 0, overlaps = 0;
-    const examples = { crossings: [], touches: [], overlaps: [] };
+    const examples = { crossings: [], touches: [], overlaps: [], nearOverlaps: [] };
     for (let i = 0; i < segs.length; i += 1) {
       for (let j = i + 1; j < segs.length; j += 1) {
         const A = segs[i], B = segs[j];
@@ -36,6 +39,26 @@ var TreeTestLib = (function () {
         if (r === 'cross') { crossings += 1; if (examples.crossings.length < 5) examples.crossings.push([A.g, B.g]); }
         else if (r === 'touch') { touches += 1; if (examples.touches.length < 5) examples.touches.push([A.g, B.g]); }
         else if (r === 'overlap') { overlaps += 1; if (examples.overlaps.length < 5) examples.overlaps.push([A.g, B.g]); }
+      }
+    }
+    // Parallel lines of different families closer than NEAR px along a
+    // shared stretch: not touching, but they read as one line.
+    const NEAR = 6;
+    let nearOverlaps = 0;
+    for (let i = 0; i < segs.length; i += 1) {
+      for (let j = i + 1; j < segs.length; j += 1) {
+        const A = segs[i], B = segs[j];
+        if (related(A, B)) continue;
+        const [ax1, ay1, ax2, ay2] = A.s, [bx1, by1, bx2, by2] = B.s;
+        const av = Math.abs(ax1 - ax2) < 0.01, bv = Math.abs(bx1 - bx2) < 0.01;
+        const ah = Math.abs(ay1 - ay2) < 0.01, bh = Math.abs(by1 - by2) < 0.01;
+        let close = false;
+        if (av && bv && Math.abs(ax1 - bx1) > EPS && Math.abs(ax1 - bx1) < NEAR) {
+          close = Math.min(Math.max(ay1, ay2), Math.max(by1, by2)) - Math.max(Math.min(ay1, ay2), Math.min(by1, by2)) > 1;
+        } else if (ah && bh && Math.abs(ay1 - by1) > EPS && Math.abs(ay1 - by1) < NEAR) {
+          close = Math.min(Math.max(ax1, ax2), Math.max(bx1, bx2)) - Math.max(Math.min(ax1, ax2), Math.min(bx1, bx2)) > 1;
+        }
+        if (close) { nearOverlaps += 1; if (examples.nearOverlaps.length < 5) examples.nearOverlaps.push([A.g, B.g]); }
       }
     }
     let throughBox = 0;
@@ -49,7 +72,7 @@ var TreeTestLib = (function () {
         if (a.x0 < b.x1 - 0.01 && b.x0 < a.x1 - 0.01 && a.y0 < b.y1 - 0.01 && b.y0 < a.y1 - 0.01) boxOverlaps += 1;
       }
     }
-    return { crossings, touches, overlaps, throughBox, boxOverlaps, examples };
+    return { crossings, touches, overlaps, nearOverlaps, throughBox, boxOverlaps, examples };
   }
 
   function relate(a, b, eps) {

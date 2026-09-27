@@ -259,7 +259,11 @@ view.
 The layout keeps partners side by side and children under their parents,
 minimizes crossing lines, and gives every family's connector its own
 height between the rows, so lines of different families never run on top
-of each other (rows with many families simply get a bit taller). How it
+of each other (rows with many families simply get a bit taller). Where
+two lines still have to cross, one is drawn with a small gap so it's
+clear which line runs behind. Point at a person or a line to highlight
+that family's lines (everything else fades); click a line to keep it
+highlighted, and click empty space to clear it. How it
 works, and the regression check to run after changing it, are described
 in `TREE_LAYOUT.md`.
 

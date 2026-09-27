@@ -144,7 +144,7 @@ window.I18N_DATA.de = {
     "zoomIn": "Vergrößern",
     "zoomOut": "Verkleinern",
     "resetView": "Ansicht zurücksetzen",
-    "hint": "Scrollen zum Zoomen, ziehen zum Verschieben, auf eine Person klicken, um sie anzuzeigen",
+    "hint": "Scrollen zum Zoomen, ziehen zum Verschieben, auf eine Person klicken, um sie anzuzeigen. Auf eine Person oder Linie zeigen, um eine Familie hervorzuheben; eine Linie anklicken, damit die Hervorhebung bleibt.",
     "filterPeople": "Personen auswählen",
     "filterModalTitle": "Personen im Stammbaum anzeigen",
     "filterSearch": "Nach Name suchen…",

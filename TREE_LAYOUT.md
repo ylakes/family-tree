@@ -64,7 +64,23 @@ Every step only consumes the previous step's output — nothing feeds back.
 Rendering details: a single child whose box edge can meet the parents'
 drop point vertically gets a straight line with no horizontal jog;
 several families dropping from the same person, or into the same child,
-are nudged apart by a few pixels. Partners who can't stand side by side
+are nudged apart by a few pixels; a couple's drop point moves within the
+gap between their boxes to stay at least 10px from any other family's
+line in that gap.
+
+Remaining crossings (`markCrossings`): wherever two different families'
+lines still cross, one is drawn with a small gap so it reads as running
+behind the other. Fixed order, front to back: vertical lines (each leads
+from a couple to one child, so it stays unbroken), horizontal lines,
+diagonal lines between partners in different rows. Each link keeps its
+unbroken geometry in `rawSegs` for the checks.
+
+Highlighting (`wireHighlighting`, in the view): pointing at a person
+lights up all lines of their families (as a child and as a partner);
+pointing at a line lights up that family (for a marriage line, the couple
+and their children's lines) and fades everything else. Clicking a line
+keeps the highlight until the line or empty canvas is clicked again. A
+click that ends a drag is ignored. Partners who can't stand side by side
 (someone with 3+ partners) are joined by a line in the lane area below
 them, from which their children hang.
 
@@ -87,9 +103,11 @@ or, without Node, with macOS's built-in JavaScriptCore:
 the hand-built scenarios and 12 seeded synthetic families from
 `tools/tree-test-lib.js`, plus the data file (with and without the hidden
 people), and measures the actual drawn geometry: crossings, touching
-lines, overlapping lines, lines through boxes, box overlaps, and couples
-not standing side by side. Any touching/overlapping line, line through a
-box, or box overlap is reported as a failure. The synthetic generator
+lines, overlapping lines, lines running side by side less than 6px apart,
+lines through boxes, box overlaps, and couples not standing side by side.
+It also checks that every crossing got its gap (the lines as actually
+drawn must not cross or touch at all). Any of these except crossings and
+couples apart is reported as a failure. The synthetic generator
 covers remarriage with half-siblings, 3+ partners, marriages between
 branches and between cousins, spouses with their own ancestors and
 siblings, single parents, children listed under two unions, and

@@ -294,6 +294,11 @@ button.person-photo--clickable:hover { box-shadow: 0 0 0 3px var(--color-hover);
   font-size: 11px; fill: var(--color-text-muted);
 }
 .tree-link { fill: none; stroke: var(--color-deceased); stroke-width: 1.5px; }
+.tree-link-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: pointer; }
+.tree-link, .tree-node { transition: opacity 0.15s; }
+#tree-svg.is-highlighting .tree-link:not(.is-hl) { opacity: 0.15; }
+#tree-svg.is-highlighting .tree-node:not(.is-hl) { opacity: 0.35; }
+.tree-link.is-hl { stroke: var(--color-accent); stroke-width: 2.5px; }
 .tree-hint { color: var(--color-text-muted); font-size: 0.85rem; margin-top: 8px; }
 
 /* ---------- Tree person filter modal ---------- */

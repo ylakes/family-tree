@@ -15,7 +15,7 @@ const ViewTree = (() => {
   const PHOTO_D = 44, PAD = 12, GAP = 10, NODE_H = 72;
   const MIN_TEXT_W = 90, TEXT_BUFFER = 10;
   let transform = { x: 40, y: 40, scale: 1 };
-  let dragState = null;
+  let dragState = null, dragMoved = false;
   let onMouseMove = null, onMouseUp = null;
 
   let measureCtx = null;
@@ -216,7 +216,7 @@ const ViewTree = (() => {
   const PARTNER_GAP = 24, SIBLING_GAP = 30, FAMILY_GAP = 64, COMPONENT_GAP = 120;
   const DUMMY_GAP = 18;
   const MIN_ROW_GAP = 70, LANE_MARGIN = 24, LANE_SPACING = 18, LANE_CLEARANCE = 14;
-  const SPREAD = 8, DROP_CLEARANCE = 20, SEPARATION_WEIGHT = 3;
+  const SPREAD = 8, DROP_CLEARANCE = 20, SEPARATION_WEIGHT = 3, CROSSING_GAP = 6, MIN_LINE_DISTANCE = 10;
   const MAX_SWEEPS = 10, MAX_POSITION_ITERS = 200, ORDER_ILS_MAX = 600, ORDER_ILS_WORK = 40000;
 
   // Deterministic PRNG so the same data always yields the same drawing.
@@ -918,6 +918,66 @@ const ViewTree = (() => {
     return levels;
   }
 
+  // Where two different families' lines still cross, one of them is drawn
+  // with a small gap so it reads as running BEHIND the other. Fixed order,
+  // front to back: vertical lines (each leads from a couple down to one
+  // child, so they stay unbroken and easy to trace), then horizontal lines,
+  // then the rare diagonal line between partners in different rows. Lanes
+  // guarantee lines of different families never touch or overlap, so a
+  // proper crossing is the only way two of them can meet. Each link keeps
+  // its unbroken geometry in `rawSegs` (used by the layout checks); `segs`
+  // is what gets drawn. Returns the crossing points.
+  function markCrossings(links) {
+    const rank = ([x1, y1, x2, y2]) => {
+      if (Math.abs(x1 - x2) < 0.01) return 2;
+      return Math.abs(y1 - y2) < 0.01 ? 1 : 0;
+    };
+    const all = [];
+    links.forEach((l) => l.segs.forEach((sg) => all.push({ l, sg, rank: rank(sg) })));
+    const related = (a, b) => a === b || a.group === b.group || a.pair === b.group || b.pair === a.group;
+    const crossings = [];
+    links.forEach((l) => {
+      l.rawSegs = l.segs;
+      const out = [];
+      l.segs.forEach((sg) => {
+        const [x1, y1, x2, y2] = sg;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        const myRank = rank(sg);
+        // Parameters (0..1 along this segment) where a line in front of it
+        // properly crosses it, away from both lines' ends.
+        const cuts = [];
+        if (len > 2 * CROSSING_GAP) {
+          all.forEach((o) => {
+            if (o.rank <= myRank || related(l, o.l)) return;
+            const [x3, y3, x4, y4] = o.sg;
+            const ex = x4 - x3, ey = y4 - y3;
+            const den = dx * ey - dy * ex;
+            if (Math.abs(den) < 1e-9) return;
+            const t = ((x3 - x1) * ey - (y3 - y1) * ex) / den;
+            const u = ((x3 - x1) * dy - (y3 - y1) * dx) / den;
+            const olen = Math.hypot(ex, ey);
+            if (t * len < CROSSING_GAP || (1 - t) * len < CROSSING_GAP || u * olen < 1 || (1 - u) * olen < 1) return;
+            cuts.push(t);
+            crossings.push({ x: x1 + t * dx, y: y1 + t * dy });
+          });
+        }
+        if (!cuts.length) { out.push(sg); return; }
+        cuts.sort((a, b) => a - b);
+        const half = CROSSING_GAP / len;
+        let start = 0;
+        cuts.forEach((t) => {
+          const end = t - half;
+          if (end - start > 1e-6) out.push([x1 + start * dx, y1 + start * dy, x1 + end * dx, y1 + end * dy]);
+          start = Math.max(start, t + half);
+        });
+        if (1 - start > 1e-6) out.push([x1 + start * dx, y1 + start * dy, x2, y2]);
+      });
+      l.segs = out;
+    });
+    return crossings;
+  }
+
   // The layout depends only on the people's box contents (name, dates) and
   // the unions, so the last result is reused until one of those changes —
   // switching views or tabs doesn't pay for the order search again.
@@ -1014,9 +1074,29 @@ const ViewTree = (() => {
         if (lo > hi) return;
         const x = Math.min(hi, Math.max(lo, xAll.get(c.botPts[0].id)));
         c.topPts[0].x = x; c.botPts[0].x = x;
+        c.straight = [lo, hi];
       });
       spreadCoincident(topPts);
       spreadCoincident(botPts);
+      // A couple's drop point may sit anywhere in the gap between their
+      // boxes: move it (together with a straight single-child line) so it
+      // doesn't run right beside another family's line in this gap.
+      conns.forEach((c) => {
+        const p = c.topPts[0];
+        if (!p || !p.mid) return;
+        const [lo, hi] = c.straight || [p.lo, p.hi];
+        const others = [];
+        conns.forEach((o) => { if (o !== c) [...o.topPts, ...o.botPts].forEach((q) => others.push(q.x)); });
+        const clearance = (x) => others.reduce((m, ox) => Math.min(m, Math.abs(ox - x)), Infinity);
+        if (clearance(p.x) >= MIN_LINE_DISTANCE) return;
+        let best = p.x, bestScore = -Infinity;
+        for (let x = lo; x <= hi + 1e-6; x += 0.5) {
+          const score = Math.min(clearance(x), MIN_LINE_DISTANCE) * 1000 - Math.abs(x - p.x);
+          if (score > bestScore) { bestScore = score; best = x; }
+        }
+        p.x = best;
+        if (c.straight) c.botPts[0].x = best;
+      });
       conns.forEach((c) => { c.topXs = c.topPts.map((p) => p.x); c.botXs = c.botPts.map((p) => p.x); });
       gapLevels.set(r, assignLanes(conns));
     });
@@ -1058,8 +1138,9 @@ const ViewTree = (() => {
         segs.push([p.x, y, p.x, rowTop[c.r + 1] + (dummy ? NODE_H : 0)]);
       });
       const pair = c.fam.partners.length === 2 ? `m:${[...c.fam.partners].sort().join('|')}` : c.fam.id;
-      links.push({ group: c.fam.id, pair, kind: 'family', dashed: false, segs: dashTops ? segs.slice(c.topPts.length) : segs });
-      if (dashTops) links.push({ group: c.fam.id, pair, kind: 'family', dashed: true, segs: segs.slice(0, c.topPts.length) });
+      const people = [...c.fam.partners, ...c.fam.kids];
+      links.push({ group: c.fam.id, pair, people, kind: 'family', dashed: false, segs: dashTops ? segs.slice(c.topPts.length) : segs });
+      if (dashTops) links.push({ group: c.fam.id, pair, people, kind: 'family', dashed: true, segs: segs.slice(0, c.topPts.length) });
     });
 
     // Marriage lines between partners standing side by side (one line per
@@ -1078,22 +1159,24 @@ const ViewTree = (() => {
         if (Math.abs(seq.indexOf(a) - seq.indexOf(b)) !== 1) return;
         const [l, r] = ca.x <= cb.x ? [a, b] : [b, a];
         const y = ca.y;
-        const link = { group: `m:${key}`, kind: 'marriage', dashed: !f.current, segs: [[centers.get(l).x + widths.get(l) / 2, y, centers.get(r).x - widths.get(r) / 2, y]] };
+        const link = { group: `m:${key}`, people: [a, b], kind: 'marriage', dashed: !f.current, segs: [[centers.get(l).x + widths.get(l) / 2, y, centers.get(r).x - widths.get(r) / 2, y]] };
         seenPairs.set(key, link);
         links.push(link);
       } else {
         const [hi, lo] = ca.y < cb.y ? [a, b] : [b, a];
         const ch = centers.get(hi), cl = centers.get(lo);
-        const link = { group: `m:${key}`, kind: 'marriage', dashed: !f.current, segs: [[ch.x, ch.y + NODE_H / 2, cl.x, cl.y - NODE_H / 2]] };
+        const link = { group: `m:${key}`, people: [a, b], kind: 'marriage', dashed: !f.current, segs: [[ch.x, ch.y + NODE_H / 2, cl.x, cl.y - NODE_H / 2]] };
         seenPairs.set(key, link);
         links.push(link);
       }
     });
 
+    const crossings = markCrossings(links);
+
     let totalWidth = 0;
     xAll.forEach((v, id) => { totalWidth = Math.max(totalWidth, v + w(id) / 2); });
     const totalHeight = rowTop[maxRow] + NODE_H + (gapLevels.has(maxRow) ? gapHeight(maxRow) : 0);
-    return { centers, widths, lines, maxGen: maxRow, totalWidth, totalHeight, links };
+    return { centers, widths, lines, maxGen: maxRow, totalWidth, totalHeight, links, crossings };
   }
 
   function render(container) {
@@ -1160,10 +1243,10 @@ const ViewTree = (() => {
     const svg = container.querySelector('#tree-svg');
 
     const r1 = (v) => Math.round(v * 10) / 10;
-    const linksHtml = links.map((link) => {
-      const d = link.segs.map(([x1, y1, x2, y2]) => `M${r1(x1)},${r1(y1)} L${r1(x2)},${r1(y2)}`).join(' ');
-      return `<path class="tree-link" d="${d}"${link.dashed ? ' stroke-dasharray="4,3"' : ''}/>`;
-    });
+    const pathD = (segs) => segs.map(([x1, y1, x2, y2]) => `M${r1(x1)},${r1(y1)} L${r1(x2)},${r1(y2)}`).join(' ');
+    const linksHtml = links.map((link, i) => `<path class="tree-link" data-link="${i}" d="${pathD(link.segs)}"${link.dashed ? ' stroke-dasharray="4,3"' : ''}/>`);
+    // Invisible, wider copies of every line so thin lines are easy to point at.
+    const hitHtml = links.map((link, i) => `<path class="tree-link-hit" data-link="${i}" d="${pathD(link.rawSegs || link.segs)}"/>`);
 
     const photoR = PHOTO_D / 2;
     const nodesHtml = people.map((p) => {
@@ -1200,11 +1283,12 @@ const ViewTree = (() => {
     svg.setAttribute('viewBox', `0 0 ${Math.max(totalWidth, 400)} ${Math.max(totalHeight, 300)}`);
     svg.innerHTML = `
       <defs><clipPath id="tree-photo-clip"><circle cx="${photoR}" cy="${photoR}" r="${photoR}" transform="translate(${PAD},${NODE_H / 2 - photoR})"/></clipPath></defs>
-      <g id="tree-viewport">${linksHtml.join('')}${nodesHtml}</g>`;
+      <g id="tree-viewport">${linksHtml.join('')}${hitHtml.join('')}${nodesHtml}</g>`;
 
     svg.querySelectorAll('[data-person]').forEach((node) => {
-      node.onclick = () => App.setFocusedPerson(node.dataset.person);
+      node.onclick = () => { if (!dragMoved) App.setFocusedPerson(node.dataset.person); };
     });
+    const clearHighlight = wireHighlighting(svg, links);
 
     const wrap = container.querySelector('#tree-wrap');
     applyTransform(svg);
@@ -1222,6 +1306,7 @@ const ViewTree = (() => {
       // fixed page). Must be the identity transform for print.
       transform = { x: 0, y: 0, scale: 1 };
       applyTransform(svg);
+      clearHighlight();
       window.print();
     };
   }
@@ -1291,6 +1376,60 @@ const ViewTree = (() => {
     if (g) g.setAttribute('transform', `translate(${transform.x},${transform.y}) scale(${transform.scale})`);
   }
 
+  // Pointing at a person lights up every line of their families (as a child
+  // and as a partner); pointing at a line lights up that family — for a
+  // marriage line, the couple and all their children's lines — and fades
+  // everything else. Clicking a line keeps its highlight until that line
+  // or empty canvas is clicked again. Returns a function that clears it.
+  function wireHighlighting(svg, links) {
+    const linkEls = [...svg.querySelectorAll('.tree-link')];
+    const nodeEls = [...svg.querySelectorAll('[data-person]')];
+    const collect = (match) => {
+      const idx = new Set(), people = new Set();
+      links.forEach((l, j) => { if (match(l)) { idx.add(j); l.people.forEach((p) => people.add(p)); } });
+      return { idx, people };
+    };
+    const forLink = (i) => {
+      const l = links[i];
+      const couple = l.kind === 'marriage' ? l.group : l.pair;
+      return collect((o) => o.group === l.group || o.group === couple || o.pair === couple);
+    };
+    const forPerson = (id) => {
+      const sel = collect((o) => o.people.includes(id));
+      sel.people.add(id);
+      return sel;
+    };
+    let pinned = null;
+    const show = (sel) => {
+      svg.classList.toggle('is-highlighting', !!sel);
+      linkEls.forEach((el) => el.classList.toggle('is-hl', !!sel && sel.idx.has(+el.dataset.link)));
+      nodeEls.forEach((el) => el.classList.toggle('is-hl', !!sel && sel.people.has(el.dataset.person)));
+    };
+    const restore = () => show(pinned && pinned.sel);
+    nodeEls.forEach((el) => {
+      el.onmouseenter = () => { if (!dragState) show(forPerson(el.dataset.person)); };
+      el.onmouseleave = restore;
+    });
+    svg.querySelectorAll('.tree-link-hit').forEach((el) => {
+      const i = +el.dataset.link;
+      el.onmouseenter = () => { if (!dragState) show(forLink(i)); };
+      el.onmouseleave = restore;
+      el.onclick = (e) => {
+        e.stopPropagation();
+        if (dragMoved) return;
+        const key = links[i].kind === 'marriage' ? links[i].group : links[i].pair;
+        pinned = pinned && pinned.key === key ? null : { key, sel: forLink(i) };
+        restore();
+      };
+    });
+    svg.onclick = (e) => {
+      if (dragMoved || e.target.closest('[data-person]')) return;
+      pinned = null;
+      restore();
+    };
+    return () => { pinned = null; restore(); };
+  }
+
   function wireInteraction(wrap, svg) {
     if (onMouseMove) window.removeEventListener('mousemove', onMouseMove);
     if (onMouseUp) window.removeEventListener('mouseup', onMouseUp);
@@ -1303,10 +1442,14 @@ const ViewTree = (() => {
     };
     wrap.onmousedown = (e) => {
       dragState = { startX: e.clientX, startY: e.clientY, origX: transform.x, origY: transform.y };
+      dragMoved = false;
       wrap.classList.add('dragging');
     };
     onMouseMove = (e) => {
       if (!dragState) return;
+      // A click that ends a drag isn't a click on whatever is under the
+      // pointer (e.g. it mustn't open a person or pin a highlight).
+      if (Math.abs(e.clientX - dragState.startX) + Math.abs(e.clientY - dragState.startY) > 4) dragMoved = true;
       transform.x = dragState.origX + (e.clientX - dragState.startX);
       transform.y = dragState.origY + (e.clientY - dragState.startY);
       applyTransform(svg);
