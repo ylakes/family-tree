@@ -1,8 +1,8 @@
 // Full family tree: a generation-layered layout rendered as plain SVG
 // (rect/circle/text — no HTML foreignObject), with mouse-drag pan and
 // wheel/button zoom. Built in-house (no vendored charting library) so the
-// app has zero runtime dependency risk and the generation layout can
-// special-case remarriage/half-sibling data cleanly.
+// app has zero runtime dependency risk. See TREE_LAYOUT.md for how the
+// layout works and how to test it.
 //
 // Plain SVG primitives instead of foreignObject+HTML/CSS for two reasons:
 // Chrome's print/PDF pipeline can silently drop CSS borders on HTML content
@@ -10,23 +10,10 @@
 // native SVG shapes always print reliably. Node height is a fixed constant
 // (not content-driven) so two partners' centers always line up and the
 // connecting line stays perfectly horizontal — width is what flexes to fit
-// each name, with per-row packing so widening a node never overlaps its
-// neighbors.
-//
-// (A cytoscape.js + HTML-card rendering was tried and reverted — it looked
-// worse on screen and only added a vendored runtime dependency for no real
-// layout benefit; the generation/clustering logic below is what actually
-// matters and works the same either way.)
+// each name.
 const ViewTree = (() => {
   const PHOTO_D = 44, PAD = 12, GAP = 10, NODE_H = 72;
-  const ROW_GAP = 70;
   const MIN_TEXT_W = 90, TEXT_BUFFER = 10;
-  // Horizontal gap between two adjacent people depends on how they relate —
-  // partners sit almost touching, siblings a bit further apart, and two
-  // unconnected family branches get real breathing room — rather than one
-  // fixed distance applied everywhere regardless of whether that space is
-  // actually needed (see gapBetween below).
-  const PARTNER_GAP = 16, SIBLING_GAP = 30, FAMILY_GAP = 64;
   let transform = { x: 40, y: 40, scale: 1 };
   let dragState = null;
   let onMouseMove = null, onMouseUp = null;
@@ -70,1051 +57,871 @@ const ViewTree = (() => {
     return { ...data, people, unions };
   }
 
-  // Two married partners should land on the same generation whenever
-  // possible — not only when one of them has literally no recorded
-  // parents. Real trees regularly have one side's ancestry recorded less
-  // deep than the other (grandparents never entered, a branch just not
-  // researched as far back) even though both people themselves have
-  // parents on file; blood generation alone would still show them a row
-  // apart with a diagonal marriage connector.
-  //
-  // Critically, when the person who needs to move deeper HAS recorded
-  // parents, the fix is to push those PARENTS deeper (by however much is
-  // needed) rather than pulling just that one person away from their own
-  // family — otherwise they end up split from their own siblings, who
-  // stay behind at the shallower generation. Pushing the parents down
-  // cascades to every sibling via the child-must-be-below-parents rule
-  // below, so the whole family block moves together and stays intact.
-  // Only someone with NO recorded parents (nothing to push instead) is
-  // moved directly. Both rules repeat to a fixpoint, since one marriage's
-  // adjustment can ripple through several more.
+  // Generation (row) of every person. Rules, in priority order:
+  //   1. a child is always at least one row below each of their parents;
+  //   2. partners share a row whenever that doesn't contradict rule 1 (it
+  //      can't be honored when, e.g., someone partners with a grandchild of
+  //      their own sibling — such a couple is simply drawn across rows);
+  //   3. parent->child links are kept as short as possible, so a person
+  //      without recorded parents sits directly above their children and
+  //      a less-researched branch lines up with its in-laws.
+  // Partners are merged into shared-row classes one union at a time
+  // (current unions first), skipping any merge that would put a class above
+  // itself. Rows then come from a longest-path pass over the classes,
+  // followed by bounded "pull" passes that move each class within its
+  // feasible range toward whichever side has more links. Every step is
+  // bounded, so contradictory data can never make it run away.
   function computeGenerations(data) {
-    const people = DataModel.allPeople(data);
+    const people = DataModel.allPeople(data).map((p) => p.id);
+    const known = new Set(people);
+    const unions = DataModel.allUnions(data).map((u) => {
+      const partners = [...new Set(u.partners)].filter((id) => known.has(id));
+      const children = [...new Set(u.children)].filter((id) => known.has(id) && !partners.includes(id));
+      return { partners, children, current: u.status === 'current' };
+    });
+
+    // Person-level parent->child links, minus any that close a cycle (a
+    // person recorded as their own ancestor).
+    const kids = new Map(people.map((id) => [id, new Set()]));
+    unions.forEach((u) => u.partners.forEach((p) => u.children.forEach((c) => kids.get(p).add(c))));
+    const state = new Map();
+    people.forEach((root) => {
+      if (state.has(root)) return;
+      const stack = [[root, [...kids.get(root)]]];
+      state.set(root, 1);
+      while (stack.length) {
+        const top = stack[stack.length - 1];
+        if (!top[1].length) { state.set(top[0], 2); stack.pop(); continue; }
+        const c = top[1].pop();
+        if (state.get(c) === 1) { kids.get(top[0]).delete(c); continue; }
+        if (!state.has(c)) { state.set(c, 1); stack.push([c, [...kids.get(c)]]); }
+      }
+    });
+
+    // Shared-row classes (union-find), merged only when neither class is
+    // an ancestor of the other.
+    const cls = new Map(people.map((id) => [id, id]));
+    const find = (x) => { while (cls.get(x) !== x) { cls.set(x, cls.get(cls.get(x))); x = cls.get(x); } return x; };
+    const members = new Map(people.map((id) => [id, [id]]));
+    const reaches = (from, to) => {
+      const seen = new Set([from]);
+      const queue = [from];
+      while (queue.length) {
+        const c = queue.shift();
+        for (const m of members.get(c)) {
+          for (const k of kids.get(m)) {
+            const kc = find(k);
+            if (kc === to) return true;
+            if (!seen.has(kc)) { seen.add(kc); queue.push(kc); }
+          }
+        }
+      }
+      return false;
+    };
+    [...unions.filter((u) => u.current), ...unions.filter((u) => !u.current)].forEach((u) => {
+      for (let i = 1; i < u.partners.length; i += 1) {
+        const a = find(u.partners[0]), b = find(u.partners[i]);
+        if (a === b || reaches(a, b) || reaches(b, a)) continue;
+        cls.set(a, b);
+        members.set(b, [...members.get(b), ...members.get(a)]);
+        members.delete(a);
+      }
+    });
+
+    // Class graph, one edge per person-level link.
+    const classes = [...members.keys()];
+    const up = new Map(classes.map((c) => [c, []]));
+    const down = new Map(classes.map((c) => [c, []]));
+    people.forEach((p) => kids.get(p).forEach((k) => {
+      const a = find(p), b = find(k);
+      if (a === b) return;
+      down.get(a).push(b);
+      up.get(b).push(a);
+    }));
+
+    // Longest path from the top, in topological order.
+    const indeg = new Map(classes.map((c) => [c, up.get(c).length]));
+    const order = classes.filter((c) => indeg.get(c) === 0);
+    for (let i = 0; i < order.length; i += 1) {
+      down.get(order[i]).forEach((d) => { indeg.set(d, indeg.get(d) - 1); if (indeg.get(d) === 0) order.push(d); });
+    }
+    const g = new Map(classes.map((c) => [c, 0]));
+    order.forEach((c) => up.get(c).forEach((p) => { g.set(c, Math.max(g.get(c), g.get(p) + 1)); }));
+
+    // Pull passes: each move strictly shortens the total link length, so
+    // this terminates; the pass cap is only a safety net.
+    for (let pass = 0; pass < 2 * classes.length + 10; pass += 1) {
+      let moved = false;
+      order.forEach((c) => {
+        const ps = up.get(c), ds = down.get(c);
+        let target = g.get(c);
+        if (ds.length > ps.length) target = Math.min(...ds.map((d) => g.get(d))) - 1;
+        else if (ps.length > ds.length) target = Math.max(...ps.map((p) => g.get(p))) + 1;
+        if (target !== g.get(c)) { g.set(c, target); moved = true; }
+      });
+      if (!moved) break;
+    }
+
+    // Each connected part of the tree starts at row 0.
+    const comp = new Map(people.map((id) => [id, id]));
+    const cf = (x) => { while (comp.get(x) !== x) { comp.set(x, comp.get(comp.get(x))); x = comp.get(x); } return x; };
+    unions.forEach((u) => {
+      const all = [...u.partners, ...u.children];
+      all.slice(1).forEach((id) => { const a = cf(all[0]), b = cf(id); if (a !== b) comp.set(a, b); });
+    });
+    const minOf = new Map();
+    people.forEach((id) => {
+      const r = cf(id), v = g.get(find(id));
+      minOf.set(r, minOf.has(r) ? Math.min(minOf.get(r), v) : v);
+    });
     const gen = new Map();
-
-    function bloodGen(id, visiting) {
-      if (gen.has(id)) return gen.get(id);
-      if (visiting.has(id)) return 0;
-      visiting.add(id);
-      const parents = DataModel.getParents(data, id);
-      const g = parents.length === 0 ? 0 : 1 + Math.max(...parents.map((p) => bloodGen(p.id, visiting)));
-      gen.set(id, g);
-      return g;
-    }
-    people.forEach((p) => bloodGen(p.id, new Set()));
-
-    let changed = true;
-    let guard = 0;
-    while (changed && guard < people.length + 8) {
-      changed = false;
-      guard += 1;
-      people.forEach((p) => {
-        let maxPartnerGen = null;
-        DataModel.unionsAsPartner(data, p.id).forEach((u) => {
-          const otherId = DataModel.otherPartner(u, p.id);
-          if (otherId && gen.has(otherId)) {
-            maxPartnerGen = maxPartnerGen === null ? gen.get(otherId) : Math.max(maxPartnerGen, gen.get(otherId));
-          }
-        });
-        if (maxPartnerGen === null || maxPartnerGen <= gen.get(p.id)) return;
-        const parents = DataModel.getParents(data, p.id);
-        if (parents.length === 0) {
-          gen.set(p.id, maxPartnerGen);
-          changed = true;
-          return;
-        }
-        // Raise each parent to AT LEAST what's needed for p to reach
-        // maxPartnerGen once cascaded (never lower it) — using max here
-        // rather than adding a fixed delta keeps this safe to apply
-        // redundantly when more than one sibling pulls on the same
-        // parents in the same pass.
-        parents.forEach((par) => {
-          if (gen.get(par.id) < maxPartnerGen - 1) {
-            gen.set(par.id, maxPartnerGen - 1);
-            changed = true;
-          }
-        });
-      });
-      people.forEach((p) => {
-        const parents = DataModel.getParents(data, p.id);
-        if (parents.length === 0) return;
-        const required = 1 + Math.max(...parents.map((par) => gen.get(par.id)));
-        if (required > gen.get(p.id)) {
-          gen.set(p.id, required);
-          changed = true;
-        }
-      });
-      // Closes any gap the pushes above just opened one level higher: a
-      // person pushed deeper (to match a spouse) drags only their DIRECT
-      // parents down with them (the block above) — if those parents
-      // themselves have recorded parents, THOSE grandparents never get
-      // pushed by anything, since the couple they're pushed to match
-      // (e.g. two spouses becoming co-parents of the same child) are
-      // moved together and never end up individually "behind" each
-      // other, so the spousal-mismatch check that would normally trigger
-      // a further push never fires again past that point. Left alone,
-      // that strands the deeper ancestors 2+ rows above their own
-      // descendant instead of the usual 1, and — worse — leaves two
-      // recorded-ancestor couples who are meant to be exact generational
-      // peers (e.g. two sets of grandparents on either side of the same
-      // marriage) sitting at DIFFERENT rows, purely because only one
-      // side's chain happened to get a push. Re-checking every parent
-      // link on every iteration, to the same fixpoint as everything
-      // else, recurses this closure arbitrarily far up any ancestor
-      // chain, however deep.
-      people.forEach((p) => {
-        const parents = DataModel.getParents(data, p.id);
-        parents.forEach((par) => {
-          if (gen.get(p.id) - 1 > gen.get(par.id)) {
-            gen.set(par.id, gen.get(p.id) - 1);
-            changed = true;
-          }
-        });
-      });
-    }
+    people.forEach((id) => gen.set(id, g.get(find(id)) - minOf.get(cf(id))));
     return gen;
   }
 
-  // Groups a generation's people into sibling clusters: connected
-  // components of the "shares at least one parent" graph. This is NOT the
-  // same as grouping by union — two children from DIFFERENT unions that
-  // share one parent (half-siblings, e.g. a parent's kids from two
-  // relationships) still belong in the same visual group, or they'd be
-  // scattered based on nothing more than which union happened to be
-  // created first, splitting a couple's parents' descendants across the
-  // row and forcing their connector lines to cross everyone else's.
-  function clusterSiblings(data, gen, g) {
-    const idsAtG = DataModel.allPeople(data).filter((p) => gen.get(p.id) === g).map((p) => p.id);
-    const idSet = new Set(idsAtG);
-    const adjacency = new Map(idsAtG.map((id) => [id, new Set()]));
-    const childrenByParent = new Map();
-    DataModel.allUnions(data).forEach((u) => {
-      const kids = u.children.filter((c) => idSet.has(c));
-      if (kids.length === 0) return;
-      u.partners.forEach((pid) => {
-        if (!childrenByParent.has(pid)) childrenByParent.set(pid, new Set());
-        kids.forEach((k) => childrenByParent.get(pid).add(k));
-      });
-    });
-    childrenByParent.forEach((kidsSet) => {
-      const kids = [...kidsSet];
-      for (let i = 1; i < kids.length; i += 1) {
-        adjacency.get(kids[0]).add(kids[i]);
-        adjacency.get(kids[i]).add(kids[0]);
-      }
-    });
-    const visited = new Set();
-    const clusters = [];
-    idsAtG.forEach((start) => {
-      if (visited.has(start)) return;
-      const comp = [];
-      const queue = [start];
-      visited.add(start);
-      while (queue.length) {
-        const cur = queue.shift();
-        comp.push(cur);
-        adjacency.get(cur).forEach((n) => { if (!visited.has(n)) { visited.add(n); queue.push(n); } });
-      }
-      clusters.push(comp);
-    });
-    return clusters;
+  // ---- Layout -----------------------------------------------------------
+  //
+  // A layered ("Sugiyama-style") drawing adapted to family trees, in five
+  // independent steps. Each step only consumes the previous step's output,
+  // never feeds back into it:
+  //
+  //   1. Rows: computeGenerations above. A parent->child link that skips
+  //      rows (a child pushed deeper to sit next to their spouse) gets an
+  //      invisible "dummy" item in every row it passes through, so every
+  //      connector only ever spans one row gap.
+  //   2. Blocks: people married within the same row are fused into a block
+  //      that always stays contiguous (a person with two partners sits
+  //      between them). A block may have several valid internal
+  //      arrangements (orientation; which side each of 3+ partners is on).
+  //   3. Order: left-to-right order of blocks within each row, minimizing
+  //      connector crossings, with birth order among siblings as the
+  //      secondary goal (barycenter sweeps, then a local search that
+  //      accepts a move only if it strictly lowers crossings*1000 +
+  //      birth-order inversions). Pure integer order, no pixels.
+  //   4. Coordinates: with the order fixed, x positions minimize the
+  //      squared distance between every child and their parents' anchor
+  //      (and every couple and the center of their children), subject to
+  //      minimum gaps. Solved row by row exactly (weighted isotonic
+  //      regression), iterated to convergence.
+  //   5. Lanes: every family's horizontal connector gets its own height
+  //      ("lane") in the gap below the parents. Lane order within a gap is
+  //      chosen to minimize crossings (exact search), two families only
+  //      share a lane when their lines are far apart horizontally, and each
+  //      gap is made just tall enough for its lanes — so two different
+  //      families' lines never run on top of each other.
+  //
+  // Disconnected parts of the tree are laid out independently and placed
+  // side by side.
+
+  const PARTNER_GAP = 24, SIBLING_GAP = 30, FAMILY_GAP = 64, COMPONENT_GAP = 120;
+  const DUMMY_GAP = 18;
+  const MIN_ROW_GAP = 70, LANE_MARGIN = 24, LANE_SPACING = 18, LANE_CLEARANCE = 14;
+  const SPREAD = 8, DROP_CLEARANCE = 20, SEPARATION_WEIGHT = 3;
+  const MAX_SWEEPS = 10, MAX_POSITION_ITERS = 200, ORDER_ILS_MAX = 600, ORDER_ILS_WORK = 40000;
+
+  // Deterministic PRNG so the same data always yields the same drawing.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
   }
 
   function birthOrderCompare(data, a, b) {
-    const pa = DataModel.getPerson(data, a), pb = DataModel.getPerson(data, b);
+    const pa = data.people[a], pb = data.people[b];
     const ca = DataModel.dateToComparable(pa.birthDate);
     const cb = DataModel.dateToComparable(pb.birthDate);
-    if (ca !== null && cb !== null) return ca - cb;
-    if (ca !== null) return -1;
-    if (cb !== null) return 1;
+    if (ca !== null && cb !== null && ca !== cb) return ca - cb;
+    if (ca !== null && cb === null) return -1;
+    if (cb !== null && ca === null) return 1;
     return (DataModel.fullName(pa) || '').localeCompare(DataModel.fullName(pb) || '');
   }
 
-  function nameKeyOf(data, personId) {
-    return DataModel.fullName(DataModel.getPerson(data, personId)) || '';
-  }
-
-  // ---- Ordering (step 2: decide left-to-right SEQUENCE, ignoring pixel
-  // widths entirely) ------------------------------------------------------
-  //
-  // Every row is built from "clusters" (blood-sibling groups — see
-  // clusterSiblings) chained together wherever a marriage links two
-  // clusters, so partners always end up adjacent and a person married into
-  // two same-generation spouses (current + former) lands strictly between
-  // them (see buildChain). The one open question is which END of each
-  // chain faces left and which chain comes before which other chain in the
-  // row — decided by RANK: each cluster's rank is the average row-position
-  // of whichever neighboring row (above or below) is currently fixed.
-  //
-  // A single top-down pass (rank from the row above only) cannot avoid
-  // crossing connectors to the row BELOW, since that row doesn't have an
-  // order yet. The reverse (bottom-up only) has the same problem the other
-  // direction. So this alternates: a full top-down sweep (each row ranked
-  // by the row above, already fixed), then a full bottom-up sweep (each
-  // row ranked by the row below, just fixed by the sweep before it),
-  // repeated a handful of times. This is the standard "barycenter" method
-  // for ordering a layered graph to minimize crossings — deliberately kept
-  // to PURE RANK (an integer position within a row), never a pixel
-  // coordinate: an earlier version of this algorithm fed real pixel
-  // positions back into ordering decisions and produced a genuine
-  // two-state oscillation that never settled (a couple's left-right order
-  // flipping every single pass, forever) — pixel position depends on text
-  // width and a dozen unrelated things that have nothing to do with a
-  // discrete left-right choice. Rank has none of that noise, and each
-  // sweep direction only ever reads a neighbor that was JUST fixed a
-  // moment ago in the same round, not a stale, several-steps-removed
-  // result — which is what actually converges.
-  //
-  // Order, once this settles, is never revisited — positioning (step 3,
-  // further down) only ever reserves width and nudges pixel centers within
-  // an already-fixed sequence, never reorders anything. That one-way rule
-  // is what keeps positioning's inherent messiness (text width, minimum
-  // gaps) from ever leaking back into this discrete decision.
-
-  function buildClusters(data, gen, maxGen) {
-    const clustersByGen = new Map();
-    for (let g = 0; g <= maxGen; g += 1) {
-      clustersByGen.set(g, clusterSiblings(data, gen, g).map((members) => ({ members: [...members] })));
-    }
-    return clustersByGen;
-  }
-
-  function buildClusterOf(clustersByGen) {
-    const clusterOf = new Map();
-    clustersByGen.forEach((clusters) => {
-      clusters.forEach((c) => c.members.forEach((m) => clusterOf.set(m, c)));
-    });
-    return clusterOf;
-  }
-
-  // Only same-generation marriages participate in row ordering — a couple
-  // split across generations (rare; already given its own diagonal
-  // connector by the renderer) has no "adjacent in the row" to optimize.
-  function buildSpouseEdges(data, gen) {
-    const edges = new Map();
+  // Unions reduced to what the drawing needs. A union with no partners
+  // carries no drawable information (there is nothing to connect the
+  // children to), and a single-partner union without children draws
+  // nothing either.
+  function buildFamilies(data) {
+    const fams = [];
     DataModel.allUnions(data).forEach((u) => {
-      if (u.partners.length !== 2) return;
-      const [a, b] = u.partners;
-      if (gen.get(a) === undefined || gen.get(a) !== gen.get(b)) return;
-      if (!edges.has(a)) edges.set(a, new Set());
-      if (!edges.has(b)) edges.set(b, new Set());
-      edges.get(a).add(b);
-      edges.get(b).add(a);
+      const partners = [...new Set(u.partners)].filter((id) => data.people[id]);
+      const kids = [...new Set(u.children)].filter((id) => data.people[id] && !partners.includes(id));
+      if (partners.length === 0) return;
+      if (partners.length === 1 && kids.length === 0) return;
+      fams.push({ id: u.id, partners, kids, current: u.status === 'current' });
     });
-    return edges;
+    return fams;
   }
 
-  // Union-find: groups a row's clusters into connected components of the
-  // "linked by at least one marriage" graph. Most groups are a single
-  // cluster (no cross-family marriage) or a simple pair; chains/branches
-  // (blended families with several intermarried branches, or someone with
-  // a current AND a former same-generation spouse) fall out of the same
-  // union-find naturally — there's no separate "simple couple" special
-  // case, a lone person with no siblings is just a cluster of size one,
-  // chained exactly like any other.
-  function groupClustersByMarriage(clusters, spouseEdges) {
-    const parent = clusters.map((_, i) => i);
-    const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-    const union = (i, j) => { const ri = find(i), rj = find(j); if (ri !== rj) parent[ri] = rj; };
-    const clusterIndexOfMember = new Map();
-    clusters.forEach((c, i) => c.members.forEach((m) => clusterIndexOfMember.set(m, i)));
-    clusters.forEach((c, i) => {
-      c.members.forEach((m) => {
-        const spouses = spouseEdges.get(m);
-        if (!spouses) return;
-        spouses.forEach((sp) => {
-          const j = clusterIndexOfMember.get(sp);
-          if (j !== undefined) union(i, j);
-        });
-      });
+  function connectedComponents(personIds, fams) {
+    const parent = new Map(personIds.map((id) => [id, id]));
+    const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    const join = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+    fams.forEach((f) => { const all = [...f.partners, ...f.kids]; all.slice(1).forEach((id) => join(all[0], id)); });
+    const byRoot = new Map();
+    personIds.forEach((id) => {
+      const r = find(id);
+      if (!byRoot.has(r)) byRoot.set(r, []);
+      byRoot.get(r).push(id);
     });
-    const groupsByRoot = new Map();
-    clusters.forEach((c, i) => {
-      const r = find(i);
-      if (!groupsByRoot.has(r)) groupsByRoot.set(r, []);
-      groupsByRoot.get(r).push(c);
-    });
-    return [...groupsByRoot.values()];
+    return [...byRoot.values()];
   }
 
-  // A cluster's rank as seen from one specific neighboring row: the
-  // average rank (NOT pixel position — see the file-level comment above)
-  // of whichever specific people are actually related across that row
-  // boundary. `personRank` is that neighbor row's current Map<personId,
-  // rank>; `relatedIds` picks out parents (rank from above) or children
-  // (rank from below) of this cluster's own members.
-  function clusterRank(cluster, personRank, relatedIdsOf) {
-    if (!personRank) return null;
-    const ids = new Set();
-    cluster.members.forEach((m) => relatedIdsOf(m).forEach((id) => ids.add(id)));
-    const ranks = [...ids].map((id) => personRank.get(id)).filter((v) => v !== undefined);
-    return ranks.length ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null;
-  }
+  // ---- Step 1+2: items, connectors, blocks ----------------------------
 
-  function parentIdsOf(data, personId) {
-    return DataModel.getParents(data, personId).map((p) => p.id);
-  }
-  function childIdsOf(data, personId) {
-    return DataModel.getChildren(data, personId).map((c) => c.id);
-  }
+  // Builds the per-component graph: row items (people + dummies), the
+  // connectors of every row gap, and the marriage blocks of every row.
+  // A connector is one family's link across ONE row gap: `tops` are items
+  // in row r (the parents, or a dummy continuing a longer link), `bottoms`
+  // items in row r+1 (children, or the next dummy).
+  function buildComponentGraph(data, personIds, fams, gen, widths) {
+    const inComp = new Set(personIds);
+    const items = new Map();
+    personIds.forEach((id) => items.set(id, { id, kind: 'person', r: gen.get(id), w: widths.get(id) }));
+    const conns = [];
+    const compFams = fams.filter((f) => inComp.has(f.partners[0]));
 
-  // Lays a marriage-linked group's clusters out as a chain by walking the
-  // marriage graph breadth-first from whichever cluster ranks lowest
-  // (deterministic, and tends to start from a natural "end" of the chain).
-  // A simple pair (by far the most common case) always yields the two
-  // clusters adjacent; branching/blended cases fall back to a reasonable
-  // traversal order rather than a guaranteed-optimal one — true
-  // minimum-crossing arrangement of an arbitrary graph is a much bigger
-  // problem than the marriages this app models tend to pose.
-  // `prevRank` (this row's rank map from immediately before this call) is
-  // the same tie-break-of-second-resort used in sortBlocks, and for the
-  // exact same reason: two spouses' rank-from-below ties whenever they
-  // share a child (the ordinary case), and falling straight to name would
-  // let a bottom-up sweep with nothing to say flip a couple's left-right
-  // order back and forth against whatever the top-down sweep, moments
-  // earlier in the very same round, had just decided from their own
-  // (necessarily different) individual ancestors.
-  function buildChain(data, groupClusters, spouseEdges, rankOf, prevRank) {
-    if (groupClusters.length === 1) return groupClusters;
-    const adjacency = groupClusters.map(() => new Set());
-    groupClusters.forEach((c, i) => {
-      c.members.forEach((m) => {
-        const spouses = spouseEdges.get(m);
-        if (!spouses) return;
-        spouses.forEach((sp) => {
-          groupClusters.forEach((c2, j) => {
-            if (j !== i && c2.members.includes(sp)) { adjacency[i].add(j); adjacency[j].add(i); }
-          });
-        });
-      });
-    });
-    // A cluster with no signal at all this direction (e.g. a leaf with no
-    // children of its own, during a bottom-up sweep) must never be
-    // compared on this scale against a SIBLING cluster that DOES have
-    // one — Infinity vs. a real number isn't "no information," it's "you
-    // lose, unconditionally," shoving that cluster to whichever end
-    // Infinity sorts toward regardless of where it actually belongs. If
-    // even one cluster in this group lacks a rank this direction, treat
-    // the WHOLE group as unranked and fall through to the stability
-    // tie-break instead — the same "don't mix scales" rule the row-level
-    // sort below applies for the identical reason.
-    const allRanked = groupClusters.every((c) => rankOf(c) !== null);
-    const sortKey = (i) => [
-      (allRanked ? rankOf(groupClusters[i]) : null) ?? Infinity,
-      prevRank ? (prevRank.get(groupClusters[i].members[0]) ?? Infinity) : Infinity,
-      nameKeyOf(data, groupClusters[i].members[0]),
-    ];
-    const byKey = (a, b) => {
-      const ka = sortKey(a), kb = sortKey(b);
-      if (ka[0] !== kb[0]) return ka[0] - kb[0];
-      if (ka[1] !== kb[1]) return ka[1] - kb[1];
-      return ka[2].localeCompare(kb[2]);
-    };
-
-    // A cluster married to two others WITHIN THIS GROUP (e.g. one partner
-    // with two same-generation spouses of their own, current and former)
-    // must end up strictly between them: marriage lines are drawn
-    // straight between each union's own two partners, so putting a
-    // twice-linked cluster at an edge instead forces one of its two
-    // marriage lines straight through whichever cluster actually sits at
-    // that edge. Walking breadth-first from whichever cluster ranks
-    // lowest doesn't guarantee this — if the twice-linked cluster itself
-    // happens to sort first, BFS emits it first (an edge), not the
-    // middle. When the marriage graph here is a simple path (every
-    // cluster linked to at most 2 others in this group, exactly two
-    // clusters linked to just 1 — the two ends), walking end-to-end
-    // instead guarantees correct middle placement regardless of rank.
-    const degree = groupClusters.map((_, i) => adjacency[i].size);
-    const ends = groupClusters.map((_, i) => i).filter((i) => degree[i] <= 1);
-    if (ends.length === 2 && degree.every((d) => d <= 2)) {
-      const start = ends.slice().sort(byKey)[0];
-      const order = [start];
-      const visited = new Set([start]);
-      let cur = start;
-      for (;;) {
-        const next = [...adjacency[cur]].find((j) => !visited.has(j));
-        if (next === undefined) break;
-        visited.add(next);
-        order.push(next);
-        cur = next;
+    compFams.forEach((f) => {
+      const rT = Math.max(...f.partners.map((p) => gen.get(p)));
+      const tops = f.partners.filter((p) => gen.get(p) === rT);
+      const kids = f.kids.filter((k) => gen.get(k) > rT);
+      if (kids.length === 0) {
+        if (tops.length >= 2) conns.push({ id: `${f.id}@${rT}`, fam: f, r: rT, tops, bottoms: [], first: true });
+        return;
       }
-      return order.map((i) => groupClusters[i]);
-    }
+      const maxKid = Math.max(...kids.map((k) => gen.get(k)));
+      let prevTops = tops;
+      for (let r = rT; r < maxKid; r += 1) {
+        const bottoms = kids.filter((k) => gen.get(k) === r + 1);
+        let dummy = null;
+        if (r + 1 < maxKid) {
+          dummy = `~${f.id}~${r + 1}`;
+          items.set(dummy, { id: dummy, kind: 'dummy', r: r + 1, w: 0, fam: f });
+          bottoms.push(dummy);
+        }
+        conns.push({ id: `${f.id}@${r}`, fam: f, r, tops: prevTops, bottoms, first: r === rT });
+        prevTops = dummy ? [dummy] : [];
+      }
+    });
 
-    // Anything else (a cluster linked to 3+ others, or a marriage cycle —
-    // both rare) falls back to a reasonable BFS traversal rather than a
-    // guaranteed-optimal one — true minimum-crossing arrangement of an
-    // arbitrary graph is a much bigger problem than the marriages this
-    // app models tend to pose, and a straight-line renderer can't fully
-    // avoid overlap for a cluster linked to 3+ others in one row anyway.
-    const indices = groupClusters.map((_, i) => i).sort(byKey);
-    const start = indices[0];
-    const visited = new Set([start]);
-    const order = [start];
-    const queue = [start];
-    while (queue.length) {
-      const cur = queue.shift();
-      const neighbors = [...adjacency[cur]].filter((j) => !visited.has(j)).sort(byKey);
-      neighbors.forEach((j) => { visited.add(j); order.push(j); queue.push(j); });
-    }
-    // Safety net: a cluster the walk never reached (only possible for a
-    // disconnected marriage sub-graph, which union-find already rules out)
-    // still needs to appear somewhere.
-    groupClusters.forEach((c, i) => { if (!visited.has(i)) { visited.add(i); order.push(i); } });
-    return order.map((i) => groupClusters[i]);
+    let maxRow = 0;
+    items.forEach((it) => { maxRow = Math.max(maxRow, it.r); });
+    const up = new Map(), down = new Map();
+    items.forEach((_, id) => { up.set(id, []); down.set(id, []); });
+    conns.forEach((c) => {
+      c.tops.forEach((t) => down.get(t).push(c));
+      c.bottoms.forEach((b) => up.get(b).push(c));
+    });
+
+    // Same-row marriages -> blocks.
+    const spouse = new Map();
+    compFams.forEach((f) => {
+      if (f.partners.length < 2) return;
+      for (let i = 0; i < f.partners.length; i += 1) {
+        for (let j = i + 1; j < f.partners.length; j += 1) {
+          const a = f.partners[i], b = f.partners[j];
+          if (gen.get(a) !== gen.get(b)) continue;
+          if (!spouse.has(a)) spouse.set(a, new Set());
+          if (!spouse.has(b)) spouse.set(b, new Set());
+          spouse.get(a).add(b);
+          spouse.get(b).add(a);
+        }
+      }
+    });
+    const blockOf = new Map();
+    const blocks = [];
+    items.forEach((it, id) => {
+      if (blockOf.has(id)) return;
+      const members = [];
+      const queue = [id];
+      blockOf.set(id, true);
+      while (queue.length) {
+        const cur = queue.shift();
+        members.push(cur);
+        (spouse.get(cur) || []).forEach((s) => { if (!blockOf.has(s)) { blockOf.set(s, true); queue.push(s); } });
+      }
+      const block = { r: it.r, members, alts: blockArrangements(members, spouse), a: 0 };
+      members.forEach((m) => blockOf.set(m, block));
+      blocks.push(block);
+    });
+
+    return { items, conns, up, down, spouse, blocks, blockOf, maxRow };
   }
 
-  // A bare partner — no recorded ancestors, exactly one same-generation
-  // marriage — contributes nothing a real chain slot needs: no parents to
-  // rank against the row above, and (since they share every child with
-  // whichever family member they married) no rank lost from the row below
-  // either — that member's own childIdsOf already returns the identical
-  // set (see clusterRank). The only real requirement is sitting directly
-  // beside that one person. Pulling every such partner out of the
-  // marriage graph before grouping/buildChain runs is what fixes a
-  // cluster connected to 3+ others (see buildChain's "anything else"
-  // fallback above) for the ordinary case that causes it — 3+ married
-  // siblings, or one person married more than twice — without touching
-  // any cluster whose degree was already ≤2 (every case that already
-  // renders correctly today is completely untouched: the gate below only
-  // fires once a cluster's connections exceed what a 2-ended chain can
-  // hold).
-  //
-  // Two things are deliberately NOT covered, matching buildChain's own
-  // existing best-effort fallback for the same reason: a mutual pair of
-  // two bare partners marrying each other (already a plain, working
-  // two-cluster chain) is left alone rather than extracting both and
-  // leaving no anchor to dock either onto; and a person with 3+ marriages
-  // of their own can only ever have 2 true neighbors in a single row no
-  // matter what's done here, so none of THEIR marriages are touched —
-  // half-solving an inherently unsolvable case would just trade one bad
-  // arrangement for another.
-  function classifySatellites(data, clusters, spouseEdges) {
-    const clusterIndexOfMember = new Map();
-    clusters.forEach((c, i) => c.members.forEach((m) => clusterIndexOfMember.set(m, i)));
-    const adjacency = clusters.map(() => new Set());
-    clusters.forEach((c, i) => {
-      c.members.forEach((m) => {
-        const spouses = spouseEdges.get(m);
-        if (!spouses) return;
-        spouses.forEach((sp) => {
-          const j = clusterIndexOfMember.get(sp);
-          if (j !== undefined && j !== i) { adjacency[i].add(j); adjacency[j].add(i); }
-        });
-      });
-    });
-    const isBare = clusters.map((c, i) => c.members.length === 1
-      && parentIdsOf(data, c.members[0]).length === 0
-      && adjacency[i].size === 1);
-
-    const satelliteClusterIndexes = new Set();
-    const satellitesByMember = new Map();
-    clusters.forEach((c, i) => {
-      if (!isBare[i]) return;
-      const [j] = [...adjacency[i]];
-      if (isBare[j] || adjacency[j].size < 3) return;
-      const m = c.members[0];
-      const partnerId = [...spouseEdges.get(m)].find((sp) => clusterIndexOfMember.get(sp) === j);
-      if (partnerId === undefined || spouseEdges.get(partnerId).size > 2) return;
-      satelliteClusterIndexes.add(i);
-      if (!satellitesByMember.has(partnerId)) satellitesByMember.set(partnerId, []);
-      satellitesByMember.get(partnerId).push(m);
-    });
-
-    return {
-      structuralClusters: clusters.filter((c, i) => !satelliteClusterIndexes.has(i)),
-      satellitesByMember,
+  // Valid internal orders of a marriage block: a simple chain (by far the
+  // most common case: a couple, or someone between a former and a current
+  // partner) has exactly two, itself and its mirror image. Anything with
+  // a branch (someone with 3+ partners) is enumerated and the arrangements
+  // that keep partners closest together are kept — the ordering phase then
+  // picks whichever one crosses the least.
+  function blockArrangements(members, spouse) {
+    if (members.length === 1) return [members];
+    const deg = (m) => [...(spouse.get(m) || [])].filter((s) => members.includes(s)).length;
+    const edges = [];
+    members.forEach((a) => (spouse.get(a) || []).forEach((b) => { if (a < b && members.includes(b)) edges.push([a, b]); }));
+    const isPath = edges.length === members.length - 1 && members.every((m) => deg(m) <= 2);
+    if (isPath) {
+      const start = members.find((m) => deg(m) === 1);
+      const path = [start];
+      while (path.length < members.length) {
+        const last = path[path.length - 1];
+        path.push([...spouse.get(last)].find((s) => members.includes(s) && !path.includes(s)));
+      }
+      return [path, [...path].reverse()];
+    }
+    if (members.length > 7) {
+      const sorted = [...members].sort((a, b) => deg(b) - deg(a));
+      return [sorted, [...sorted].reverse()];
+    }
+    let best = Infinity;
+    let out = [];
+    const perm = (arr, rest) => {
+      if (rest.length === 0) {
+        const idx = new Map(arr.map((m, i) => [m, i]));
+        const score = edges.reduce((s, [a, b]) => s + Math.abs(idx.get(a) - idx.get(b)) - 1, 0);
+        if (score < best) { best = score; out = [arr]; } else if (score === best && out.length < 48) out.push(arr);
+        return;
+      }
+      rest.forEach((m, i) => perm([...arr, m], [...rest.slice(0, i), ...rest.slice(i + 1)]));
     };
-  }
-
-  // Splices a member's own bare satellite partner(s) — see
-  // classifySatellites — immediately beside them: after a lead member
-  // (whose OTHER side is the real chain neighbor), before a trail member,
-  // and sandwiched one-per-side for a plain member with two, so the
-  // couple stays adjacent without needing a whole extra chain slot for a
-  // partner with no family of their own to place.
-  function spliceSatellites(members, leadMember, trailMember, satellitesByMember) {
-    const out = [];
-    members.forEach((m) => {
-      const sats = satellitesByMember.get(m) || [];
-      if (!sats.length) { out.push(m); return; }
-      if (m === leadMember) { out.push(m, ...sats); return; }
-      if (m === trailMember) { out.push(...sats, m); return; }
-      if (sats.length >= 2) { out.push(sats[0], m, ...sats.slice(1)); return; }
-      out.push(m, ...sats);
-    });
+    perm([], members);
     return out;
   }
 
-  // Within one cluster, moves whichever member is married into the
-  // PREVIOUS cluster (in the group's finalized chain order) to this
-  // cluster's leading edge, and whichever is married into the NEXT cluster
-  // to its trailing edge — everyone else keeps birth order. A cluster with
-  // no adjacent-cluster marriage (the common case: no cross-family couple
-  // touches it) is untouched, i.e. just sorted by birth order as before.
-  // Turns "brother brother PERSON, SPOUSE sister sister" (birth order,
-  // ignoring the marriage) into "brother brother PERSON | SPOUSE sister
-  // sister" (the couple adjacent, each still with their own siblings).
-  //
-  // cluster.members itself is set to the plain blood-only order, same as
-  // ever — clusters are shared, long-lived objects reused across every
-  // sweep (see buildClusters), and splicing bare satellites into that
-  // persisted array would compound across sweeps and corrupt every later
-  // lead/trail/rank lookup that assumes it holds only blood relatives.
-  // The satellite-spliced sequence is returned instead, fresh, for this
-  // one row-build to use.
-  // Partitions a list of members into groups sharing the exact same
-  // recorded parent set (sameParentUnion's own grouping key). Unlike
-  // splitIntoAnchorRuns (further down, used at positioning time to recover
-  // boundaries from an ALREADY-decided sequence), this doesn't assume the
-  // input is in any particular order — it's used here to DECIDE order, by
-  // partitioning first and choosing which group goes where after. Each
-  // group preserves the relative order its members had in the input.
-  function groupByParentSet(data, members) {
-    const groups = [];
-    members.forEach((m) => {
-      const g = groups.find((grp) => sameParentUnion(data, grp[0], m));
-      if (g) g.push(m); else groups.push([m]);
-    });
-    return groups;
+  // ---- Step 3: order --------------------------------------------------
+
+  function rowSeq(row) {
+    const seq = [];
+    row.forEach((b) => b.alts[b.a].forEach((m) => seq.push(m)));
+    return seq;
   }
 
-  // Orders a cluster's members so that a half-sibling anchor group (the
-  // children of one specific recorded union) sits together on whichever
-  // side matches where ITS OWN parents rank in the row above — instead of
-  // birth date alone, which has nothing to do with which side of the row a
-  // specific union's anchor sits on. Ordering purely by birth date is
-  // exactly what lets one half-sibling's connector cross a DIFFERENT
-  // half-sibling's connector on the way to their own, differently-placed,
-  // parents (see KNOWN_ISSUE_tree_layout_overlap.md).
-  //
-  // `parentRankOf` gives a group's rank purely from the row above (never
-  // pixel position, matching this file's core ordering-phase rule) — null
-  // when there's nothing to rank against yet (the very first seed pass, or
-  // the topmost row, which has no row above at all). Only reorders when
-  // there's more than one anchor group AND every one of them has a real
-  // rank — the same "don't mix scales" rule used throughout this file's
-  // ordering phase (see buildChain/sortBlocks): mixing a ranked group with
-  // an unranked one isn't a neutral tie, it's an unconditional loss for
-  // whichever group has nothing to compare with. A plain full-sibling
-  // cluster (one group) is always a pure birth-date sort, unchanged from
-  // before this existed.
-  function orderByAnchorGroup(data, members, parentRankOf) {
-    const sortedByBirth = [...members].sort((a, b) => birthOrderCompare(data, a, b));
-    if (!parentRankOf) return sortedByBirth;
-    const groups = groupByParentSet(data, sortedByBirth);
-    if (groups.length <= 1) return sortedByBirth;
-    const ranks = groups.map((g) => parentRankOf(g));
-    if (ranks.some((r) => r === null)) return sortedByBirth;
-    const order = groups.map((g, i) => i).sort((i, j) => ranks[i] - ranks[j]);
-    return order.flatMap((i) => groups[i]);
-  }
+  function mean(arr) { return arr.reduce((s, v) => s + v, 0) / arr.length; }
 
-  function orderMembersWithinCluster(data, cluster, prevCluster, nextCluster, spouseEdges, satellitesByMember, parentRankOf) {
-    const sortedByBirth = orderByAnchorGroup(data, cluster.members, parentRankOf);
-    if (cluster.members.length <= 1) {
-      cluster.members = sortedByBirth;
-      return { leadMember: null, trailMember: null, ordered: spliceSatellites(sortedByBirth, null, null, satellitesByMember) };
-    }
-    let leadMember = null, trailMember = null;
-    cluster.members.forEach((m) => {
-      const spouses = spouseEdges.get(m);
-      if (!spouses) return;
-      if (prevCluster && !leadMember && [...spouses].some((sp) => prevCluster.members.includes(sp))) leadMember = m;
-      if (nextCluster && !trailMember && [...spouses].some((sp) => nextCluster.members.includes(sp))) trailMember = m;
-    });
-    const rest = sortedByBirth.filter((m) => m !== leadMember && m !== trailMember);
-    const ordered = [];
-    if (leadMember) ordered.push(leadMember);
-    ordered.push(...rest);
-    if (trailMember && trailMember !== leadMember) ordered.push(trailMember);
-    cluster.members = ordered;
-    return { leadMember, trailMember, ordered: spliceSatellites(ordered, leadMember, trailMember, satellitesByMember) };
-  }
-
-  // One row's clusters, grouped into marriage-chains and internally
-  // ordered — everything ordering needs from a row, for one sweep
-  // direction's rankOf. `parentRankOf` is ALWAYS the row-above signal
-  // (regardless of which direction this particular sweep pass is
-  // currently ranking blocks by) — see orderByAnchorGroup for why: a
-  // half-sibling run's own side of the row is a property of its parents,
-  // never its children, so it doesn't alternate with sweep direction the
-  // way block/cluster ordering does.
-  function buildBlocksForRow(data, clusters, spouseEdges, rankOf, prevRank, parentRankOf) {
-    const { structuralClusters, satellitesByMember } = classifySatellites(data, clusters, spouseEdges);
-    const groups = groupClustersByMarriage(structuralClusters, spouseEdges);
-    return groups.map((groupClusters) => {
-      const chain = buildChain(data, groupClusters, spouseEdges, rankOf, prevRank);
-
-      // A cluster in the MIDDLE of a 3+ chain whose connecting member
-      // faces BOTH neighbors at once (someone with a current AND a
-      // former same-generation spouse, most commonly) has nowhere left
-      // for any OTHER member of that same cluster (a sibling) to go — a
-      // cluster only has two edges, and both are already claimed by the
-      // one person who has to face each neighbor directly. Left in
-      // place, that sibling ends up wedged between the hub and whichever
-      // neighbor it's still nominally "facing", forcing that neighbor's
-      // marriage line to cross the sibling's own shared-parent connector
-      // on its way to the hub. Relocating the sibling to the OUTSIDE of
-      // the whole chain instead (past whichever end it sits nearest)
-      // keeps the hub properly sandwiched and the sibling still visibly
-      // attached to their shared parents, just from the far side.
-      // Never mutates cluster.members itself — see orderMembersWithinCluster.
-      // hubOnlyClusters/orderedByCluster record this row-build's own
-      // results so the final flattened sequence below can use them
-      // without touching any shared, persisted state.
-      const before = [];
-      const after = [];
-      const hubOnlyClusters = new Map();
-      const orderedByCluster = new Map();
-      chain.forEach((cluster, idx) => {
-        const { leadMember, trailMember, ordered } = orderMembersWithinCluster(data, cluster, chain[idx - 1] || null, chain[idx + 1] || null, spouseEdges, satellitesByMember, parentRankOf);
-        orderedByCluster.set(cluster, ordered);
-        if (leadMember && leadMember === trailMember && cluster.members.length > 1) {
-          const hub = leadMember;
-          const extras = ordered.filter((m) => m !== hub);
-          hubOnlyClusters.set(cluster, hub);
-          if (idx <= (chain.length - 1) / 2) before.unshift(...extras);
-          else after.push(...extras);
-        }
-      });
-
-      const members = [...before, ...chain.flatMap((c) => (hubOnlyClusters.has(c) ? [hubOnlyClusters.get(c)] : orderedByCluster.get(c))), ...after];
-      // True when `members` is a plain concatenation of each chain
-      // cluster's own ordered sequence, with cluster boundaries recoverable
-      // via sameParentUnion (see splitIntoAnchorRuns/runsOfBlock) — false
-      // for the carefully-tuned 3+-way-marriage hub/sandwich cases from
-      // residual issue 2's fix, which runsOfBlock skips entirely (treating
-      // the whole block as a single run) rather than risk interacting with
-      // that fragile logic.
-      const simple = before.length === 0 && after.length === 0 && hubOnlyClusters.size === 0;
-      return { chain, members, simple };
-    });
-  }
-
-  function blockRank(block, rankOf) {
-    const ranks = block.chain.map(rankOf).filter((v) => v !== null);
-    return ranks.length ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null;
-  }
-
-  // `prevRank` is this SAME row's rank map from immediately before this
-  // call (undefined only for the very first, no-information seed pass).
-  // A tie on the CURRENT sweep direction's rank — most commonly two
-  // parents of the same shared child, whose rank-from-below is
-  // necessarily identical — means this direction has nothing to add, not
-  // that the row should be re-decided from scratch: falling to name here
-  // would let a bottom-up sweep with nothing to say silently overwrite a
-  // perfectly good top-down decision from earlier in the very same round
-  // (and vice versa). Falling back to the row's existing order instead
-  // means a tie simply leaves whatever the OTHER direction already
-  // decided alone. Name is still the tie-break of last resort, for
-  // whichever block has never been ranked by anything at all yet.
-  function sortBlocks(data, blocks, rankOf, prevRank) {
-    // Same "don't mix scales" rule as buildChain's allRanked check, one
-    // level up: a childless leaf block (no rank-from-below at all) must
-    // never be compared directly against a sibling block that DOES have
-    // one — Infinity isn't a neutral placeholder there, it's an
-    // unconditional loss that shoves the childless block to whichever
-    // end Infinity sorts toward, regardless of where it actually
-    // belongs. Whenever even one block in this row has no rank this
-    // direction, the whole row falls through to the stability tie-break
-    // instead of letting the few blocks that DO have a rank decide
-    // everyone else's position by default.
-    const allRanked = blocks.every((b) => blockRank(b, rankOf) !== null);
-    return blocks.slice().sort((a, b) => {
-      const ra = (allRanked ? blockRank(a, rankOf) : null) ?? Infinity;
-      const rb = (allRanked ? blockRank(b, rankOf) : null) ?? Infinity;
-      if (ra !== rb) return ra - rb;
-      if (prevRank) {
-        const pa = prevRank.get(a.members[0]);
-        const pb = prevRank.get(b.members[0]);
-        if (pa !== undefined && pb !== undefined && pa !== pb) return pa - pb;
+  // Number of pairs i < j with a[i] > a[j] (merge sort, O(n log n)).
+  function countInversions(a) {
+    if (a.length < 2) return 0;
+    let n = 0;
+    const buf = new Array(a.length);
+    const sort = (lo, hi) => {
+      if (hi - lo < 2) return;
+      const mid = (lo + hi) >> 1;
+      sort(lo, mid); sort(mid, hi);
+      let i = lo, j = mid, k = lo;
+      while (i < mid && j < hi) {
+        if (a[j] < a[i]) { n += mid - i; buf[k++] = a[j++]; } else buf[k++] = a[i++];
       }
-      return nameKeyOf(data, a.chain[0].members[0]).localeCompare(nameKeyOf(data, b.chain[0].members[0]));
-    });
-  }
-
-  // Each PERSON's own sequential position across the whole flattened row —
-  // not their block's index. Two people in the same block (a married
-  // couple, most commonly) must never collapse to one shared rank: that's
-  // exactly the distinction needed both to compare them against a THIRD
-  // block elsewhere in the row, and — just as important — to tell them
-  // apart from each other as prevRank's stability tie-break (see
-  // buildChain/sortBlocks) the next time this exact pair ties again.
-  function rankMapOf(blocks) {
-    const rank = new Map();
-    let i = 0;
-    blocks.forEach((block) => block.members.forEach((m) => { rank.set(m, i); i += 1; }));
-    return rank;
-  }
-
-  // A snapshot of every row's current left-to-right person-id sequence —
-  // used only to detect when a sweep round stops changing anything, so
-  // the loop can stop as soon as it settles instead of always running the
-  // full cap.
-  function orderSignature(blocksByGen, maxGen) {
-    const parts = [];
-    for (let g = 0; g <= maxGen; g += 1) {
-      parts.push((blocksByGen.get(g) || []).map((b) => b.members.join(',')).join('|'));
-    }
-    return parts.join('##');
-  }
-
-  // The alternating top-down / bottom-up barycenter sweep described in the
-  // comment above buildClusters. Capped at a fixed number of rounds as a
-  // safety net (a barycenter sweep is a heuristic — it isn't mathematically
-  // guaranteed to settle for every conceivable graph — but converges in
-  // practice for the tree-like, mostly-sparse marriage graphs a genealogy
-  // actually produces, and this file's whole point is not depending on
-  // exact convergence the way the pixel-hint version used to).
-  const MAX_ORDER_SWEEPS = 12;
-
-  function computeBlockOrder(data) {
-    const gen = computeGenerations(data);
-    const maxGen = Math.max(0, ...[...gen.values()]);
-    const clustersByGen = buildClusters(data, gen, maxGen);
-    const spouseEdges = buildSpouseEdges(data, gen);
-
-    const blocksByGen = new Map();
-    const rankByGen = new Map();
-
-    // Initial seed: nothing is fixed yet anywhere, so every row starts
-    // ordered by name alone — arbitrary, but deterministic, and only ever
-    // matters for however many sweeps it takes to be replaced by rank.
-    for (let g = 0; g <= maxGen; g += 1) {
-      const parentRankOf = (members) => clusterRank({ members }, rankByGen.get(g - 1), (m) => parentIdsOf(data, m));
-      const blocks = sortBlocks(data, buildBlocksForRow(data, clustersByGen.get(g), spouseEdges, () => null, null, parentRankOf), () => null, null);
-      blocksByGen.set(g, blocks);
-      rankByGen.set(g, rankMapOf(blocks));
-    }
-
-    let signature = orderSignature(blocksByGen, maxGen);
-    for (let sweep = 0; sweep < MAX_ORDER_SWEEPS; sweep += 1) {
-      for (let g = 1; g <= maxGen; g += 1) {
-        const aboveRank = rankByGen.get(g - 1);
-        const prevRank = rankByGen.get(g);
-        const rankOf = (cluster) => clusterRank(cluster, aboveRank, (m) => parentIdsOf(data, m));
-        const parentRankOf = (members) => clusterRank({ members }, aboveRank, (m) => parentIdsOf(data, m));
-        const blocks = sortBlocks(data, buildBlocksForRow(data, clustersByGen.get(g), spouseEdges, rankOf, prevRank, parentRankOf), rankOf, prevRank);
-        blocksByGen.set(g, blocks);
-        rankByGen.set(g, rankMapOf(blocks));
-      }
-      for (let g = maxGen - 1; g >= 0; g -= 1) {
-        const belowRank = rankByGen.get(g + 1);
-        const prevRank = rankByGen.get(g);
-        const rankOf = (cluster) => clusterRank(cluster, belowRank, (m) => childIdsOf(data, m));
-        const parentRankOf = (members) => clusterRank({ members }, rankByGen.get(g - 1), (m) => parentIdsOf(data, m));
-        const blocks = sortBlocks(data, buildBlocksForRow(data, clustersByGen.get(g), spouseEdges, rankOf, prevRank, parentRankOf), rankOf, prevRank);
-        blocksByGen.set(g, blocks);
-        rankByGen.set(g, rankMapOf(blocks));
-      }
-      const nextSignature = orderSignature(blocksByGen, maxGen);
-      if (nextSignature === signature) break;
-      signature = nextSignature;
-    }
-
-    return {
-      gen, maxGen, clustersByGen, spouseEdges, blocksByGen,
-      clusterOf: buildClusterOf(clustersByGen),
+      while (i < mid) buf[k++] = a[i++];
+      while (j < hi) buf[k++] = a[j++];
+      for (k = lo; k < hi; k += 1) a[k] = buf[k];
     };
+    sort(0, a.length);
+    return n;
   }
 
-  // ---- Positioning (step 3: reserve width, then place — order from step 2
-  // is fixed from here on and never revisited) ----------------------------
+  function orderComponent(data, g) {
+    const R = g.maxRow;
+    const rows = Array.from({ length: R + 1 }, () => []);
+    const pos = Array.from({ length: R + 1 }, () => new Map());
+    const cache = new Array(R + 1).fill(null);
+    const updatePos = (r) => {
+      const m = new Map();
+      const seq = rowSeq(rows[r]);
+      seq.forEach((id, i) => m.set(id, i));
+      pos[r] = m;
+      cache[r] = null;
+      if (r > 0) cache[r - 1] = null;
+    };
+    const connsByGap = Array.from({ length: R + 1 }, () => []);
+    g.conns.forEach((c) => { if (c.tops.length && c.bottoms.length) connsByGap[c.r].push(c); });
+    const birthRank = new Map();
+    [...g.items.values()].filter((it) => it.kind === 'person').map((it) => it.id)
+      .sort((a, b) => birthOrderCompare(data, a, b)).forEach((id, i) => birthRank.set(id, i));
+    const personKids = new Map(g.conns.map((c) => [c, c.bottoms.filter((b) => birthRank.has(b))]));
 
-  // True full siblings (recorded under the exact same set of parents) —
-  // as opposed to half-siblings grouped into the same cluster only because
-  // they share ONE parent from otherwise different unions.
-  function sameParentUnion(data, a, b) {
-    const pa = new Set(DataModel.getParents(data, a).map((p) => p.id));
-    const pb = new Set(DataModel.getParents(data, b).map((p) => p.id));
-    if (pa.size === 0 || pa.size !== pb.size) return false;
-    for (const id of pa) if (!pb.has(id)) return false;
-    return true;
-  }
-
-  // Splits a block's flat, already-ordered `members` sequence into maximal
-  // contiguous runs sharing the exact same recorded parent set —
-  // `sameParentUnion`'s own grouping key. Two people from DIFFERENT
-  // marriage-chain clusters can never match this test (clusterSiblings only
-  // ever merges people who share at least one parent into the same cluster;
-  // distinct clusters share none, and a both-no-recorded-parents pair is
-  // explicitly treated as "different" by sameParentUnion's `pa.size === 0`
-  // check) — so running this directly over a whole block's members, with no
-  // other input, recovers both a half-sibling cluster's own anchor-run
-  // boundaries (residual issue 1) AND a marriage-fused block's own
-  // per-cluster boundaries (residual issue 3) in a single pass, with no new
-  // data needing to flow from ordering into positioning.
-  function splitIntoAnchorRuns(data, members) {
-    const runs = [];
-    let current = [];
-    members.forEach((m) => {
-      if (current.length === 0 || sameParentUnion(data, current[current.length - 1], m)) {
-        current.push(m);
-      } else {
-        runs.push(current);
-        current = [m];
-      }
-    });
-    if (current.length) runs.push(current);
-    return runs;
-  }
-
-  // How far a two-parent union's anchor (the average of both partners'
-  // eventual centers) sits from either partner alone — roughly half the
-  // width the OTHER partner plus the gap between them takes up. A single-
-  // parent union has no such offset (its anchor IS that one parent).
-  // Purely a function of node widths, so it's available identically
-  // during both width reservation and actual positioning — never a
-  // source of mismatch between the two, unlike using real pixel centers
-  // (only known well after reservation runs) would be.
-  function unionAnchorOffset(data, personId, widths) {
-    const parents = DataModel.getParents(data, personId);
-    if (parents.length < 2) return 0;
-    const totalW = parents.reduce((sum, p) => sum + (widths.get(p.id) || MIN_TEXT_W), 0);
-    return totalW / (parents.length * 2) + PARTNER_GAP / 2;
-  }
-
-  // Extra clearance added on top of the bare geometric minimum needed to
-  // keep two differently-anchored connectors from crossing (see
-  // unionAnchorOffset) — there's no reason to cut it close on what's
-  // effectively an infinite canvas, and a razor-thin margin leaves no room
-  // for the approximation in unionAnchorOffset to be slightly off.
-  const HALF_SIBLING_MARGIN = 24;
-
-  // Half-siblings from different unions get their own gap, sized
-  // dynamically from how far apart their respective unions' anchors
-  // actually sit (see unionAnchorOffset) rather than one fixed distance
-  // for every half-sibling pairing, or a live per-pass correction — this
-  // is purely a function of node widths, known up front and identical at
-  // both reservation and placement time, so there's never a gap between
-  // how much room was reserved and how much placement actually needs.
-  function gapBetween(a, b, spouseEdges, clusterOf, data, widths) {
-    if (spouseEdges.get(a)?.has(b)) return PARTNER_GAP;
-    if (clusterOf.get(a) === clusterOf.get(b)) {
-      if (sameParentUnion(data, a, b)) return SIBLING_GAP;
-      return SIBLING_GAP + HALF_SIBLING_MARGIN + unionAnchorOffset(data, a, widths) + unionAnchorOffset(data, b, widths);
-    }
-    return FAMILY_GAP;
-  }
-
-  function ownWidthOfSequence(members, widths, spouseEdges, clusterOf, data) {
-    let w = 0;
-    members.forEach((m, i) => {
-      w += widths.get(m) || MIN_TEXT_W;
-      if (i < members.length - 1) w += gapBetween(m, members[i + 1], spouseEdges, clusterOf, data, widths);
-    });
-    return w;
-  }
-
-  // ---- Runs: the real positioning unit ------------------------------------
-  //
-  // A "block" (a marriage chain of clusters, already fixed by the ordering
-  // phase) is still the right unit for ORDER — partners must always land
-  // adjacent — but positioning an entire block as one rigid, single-anchor
-  // unit is exactly what left residual issues 1 and 3 only partially fixed
-  // (see the 2026-08-14 structuralIdealLeftOf entries in
-  // KNOWN_ISSUE_tree_layout_overlap.md, now superseded by this). A block
-  // can contain more than one genuinely independent anchor — a half-sibling
-  // split within one cluster, or two differently-sized clusters fused by
-  // marriage — and no single shared translation can align both at once.
-  //
-  // A "run" is a block's flat `members` sequence split at every point
-  // `sameParentUnion` disagrees (via splitIntoAnchorRuns) — recovering BOTH
-  // a half-sibling cluster's own anchor-run boundaries AND a marriage-fused
-  // block's own per-cluster boundaries in one pass, with no new data needed
-  // (two different marriage-chain clusters can never share a full
-  // parent-set match). Each run gets its OWN reservation and its OWN
-  // idealCenterOf-driven position — exact per-anchor alignment, not a
-  // compromise average across every anchor a block happens to contain.
-  // `block.simple` gates this the same way it gated the superseded
-  // structuralIdealLeftOf: the hub/sandwich cases from residual issue 2's
-  // fix have a hand-tuned member order that doesn't cleanly correspond to
-  // "one run per real anchor", so a non-simple block is always exactly one
-  // run (today's original, whole-block behavior, untouched).
-  //
-  // Runs are memoized on the block object (`block.runs`) — computed once,
-  // reused by both reservation and positioning, so a run created during
-  // reservation is the SAME object positioning later looks up by reference
-  // (Maps below are keyed by run identity, not by recomputing the split).
-  function runsOfBlock(data, block) {
-    if (!block.runs) {
-      block.runs = block.simple
-        ? splitIntoAnchorRuns(data, block.members).map((members) => ({ members }))
-        : [{ members: block.members }];
-    }
-    return block.runs;
-  }
-
-  function buildRunsByGen(data, blocksByGen, maxGen) {
-    const runsByGen = new Map();
-    for (let g = 0; g <= maxGen; g += 1) {
-      const runs = [];
-      (blocksByGen.get(g) || []).forEach((block) => runs.push(...runsOfBlock(data, block)));
-      runsByGen.set(g, runs);
-    }
-    return runsByGen;
-  }
-
-  // Maps each person to the run they ended up in, per row — the run-level
-  // equivalent of the old buildBlockMapByGen, used to find which run(s) a
-  // run's children landed in, one row down.
-  function buildRunMapByGen(runsByGen, maxGen) {
-    const map = new Map();
-    for (let g = 0; g <= maxGen; g += 1) {
-      const rowMap = new Map();
-      (runsByGen.get(g) || []).forEach((run) => run.members.forEach((m) => rowMap.set(m, run)));
-      map.set(g, rowMap);
-    }
-    return map;
-  }
-
-  function childRunsOf(data, run, belowRunMap) {
-    const result = new Set();
-    run.members.forEach((m) => {
-      DataModel.getChildren(data, m).forEach((child) => {
-        const childRun = belowRunMap.get(child.id);
-        if (childRun) result.add(childRun);
-      });
-    });
-    return [...result];
-  }
-
-  // How many DISTINCT runs at each generation claim a given child-run as
-  // one of their own — see the old buildClaimCounts this replaces for why
-  // (almost always 1; a shared child gets claimed once per claimant so a
-  // shared claim is divided, not double-reserved).
-  function buildRunClaimCounts(data, runsByGen, runMapByGen, maxGen) {
-    const counts = new Map();
-    for (let g = 0; g < maxGen; g += 1) {
-      (runsByGen.get(g) || []).forEach((run) => {
-        childRunsOf(data, run, runMapByGen.get(g + 1)).forEach((cr) => counts.set(cr, (counts.get(cr) || 0) + 1));
-      });
-    }
-    return counts;
-  }
-
-  // Bottom-up, same rule as the old reserveWidths, now per RUN instead of
-  // per block: a run must be at least wide enough for its own members, but
-  // if its descendants collectively need more room than that, it reserves
-  // the extra space too. Runs from the same block are never merged back
-  // into one shared reservation — that's the entire point of positioning
-  // by run instead of by block.
-  function reserveRunWidths(data, runsByGen, runMapByGen, maxGen, widths, spouseEdges, clusterOf) {
-    const claimCounts = buildRunClaimCounts(data, runsByGen, runMapByGen, maxGen);
-    const reserved = new Map();
-    for (let g = maxGen; g >= 0; g -= 1) {
-      (runsByGen.get(g) || []).forEach((run) => {
-        const ownW = ownWidthOfSequence(run.members, widths, spouseEdges, clusterOf, data);
-        const childRuns = g < maxGen ? childRunsOf(data, run, runMapByGen.get(g + 1)) : [];
-        let childrenTotal = 0;
-        childRuns.forEach((cr, i) => {
-          const full = reserved.get(cr) ?? ownWidthOfSequence(cr.members, widths, spouseEdges, clusterOf, data);
-          childrenTotal += full / (claimCounts.get(cr) || 1);
-          if (i > 0) childrenTotal += FAMILY_GAP;
+    // Crossings in one gap if every connector were drawn as straight lines
+    // from its parents' position to each child — the standard layered-graph
+    // crossing count; lanes (step 5) can only avoid what the order allows.
+    // Plus birth-order inversions among each family's children, weighted
+    // far lower so they only ever break ties.
+    const gapCost = (r) => {
+      if (cache[r] !== null) return cache[r];
+      const conns = connsByGap[r];
+      let cost = 0;
+      if (conns.length) {
+        const pt = pos[r], pb = pos[r + 1];
+        const edges = [];
+        conns.forEach((c) => {
+          let t = 0;
+          c.tops.forEach((id) => { t += pt.get(id); });
+          t /= c.tops.length;
+          c.bottoms.forEach((b) => edges.push([t, pb.get(b)]));
         });
-        reserved.set(run, Math.max(ownW, childrenTotal));
-      });
-    }
-    return reserved;
-  }
+        edges.sort((e1, e2) => (e1[0] - e2[0]) || (e1[1] - e2[1]));
+        let inversions = 0;
+        conns.forEach((c) => {
+          const kids = personKids.get(c);
+          if (kids.length < 2) return;
+          inversions += countInversions([...kids].sort((a, b) => pb.get(a) - pb.get(b)).map((k) => birthRank.get(k)));
+        });
+        cost = countInversions(edges.map((e) => e[1])) * 1000 + inversions;
+      }
+      cache[r] = cost;
+      return cost;
+    };
+    const totalCost = () => { let s = 0; for (let r = 0; r < R; r += 1) s += gapCost(r); return s; };
+    const rowCost = (r) => (r > 0 ? gapCost(r - 1) : 0) + (r < R ? gapCost(r) : 0);
 
-  // A run's ideal horizontal center: the average position of its own
-  // recorded parents, already placed one row up (null for a run with no
-  // parents recorded at all — it just packs sequentially instead). Exactly
-  // the superseded idealCenterOf's own math — that was never wrong, only
-  // ever applied to a unit too coarse (a whole block) to have just one true
-  // anchor. Applied to a run (by construction, every member shares the
-  // exact same recorded parent set), it's exact.
-  function idealCenterOf(data, run, centers) {
-    const parentIds = new Set();
-    run.members.forEach((m) => DataModel.getParents(data, m).forEach((par) => parentIds.add(par.id)));
-    const xs = [...parentIds].map((pid) => centers.get(pid)).filter(Boolean).map((c) => c.x);
-    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
-  }
+    const snapshot = () => rows.map((row) => row.map((b) => ({ b, a: b.a })));
+    const restore = (snap) => {
+      snap.forEach((row, r) => { rows[r] = row.map((e) => { e.b.a = e.a; return e.b; }); updatePos(r); });
+    };
 
-  function placeRunMembers(run, left, widths, spouseEdges, clusterOf, data, y, centers) {
-    let x = left;
-    run.members.forEach((m, i) => {
-      const w = widths.get(m) || MIN_TEXT_W;
-      centers.set(m, { x: x + w / 2, y });
-      x += w;
-      if (i < run.members.length - 1) x += gapBetween(m, run.members[i + 1], spouseEdges, clusterOf, data, widths);
-    });
-  }
-
-  // Single top-down pass: order from step 2 is already fixed, so every row
-  // is just placed once, left to right, using each RUN's own reserved
-  // width and nudging toward ITS OWN parents' actual position — no
-  // iteration, and nothing here ever changes any run's relative order.
-  // Runs from the same original block are never specially glued together
-  // here: `gapBetween` already gives the correct gap between any two
-  // adjacent members regardless of which run/cluster/block they came from
-  // (PARTNER_GAP for a married pair straddling a run boundary, the
-  // half-sibling gap within one cluster's own runs, FAMILY_GAP between
-  // genuinely different clusters) — so treating a whole row as one flat
-  // run sequence, exactly like blocks were treated before, is enough for
-  // every run to end up correctly adjacent to its real neighbors.
-  //
-  // Overlap safety does not depend on reservation being a perfect
-  // prediction of what a run will actually need: `left = Math.max(minLeft,
-  // targetLeft)` only ever pushes a run FURTHER right than the tight-pack
-  // minimum, never left of it, so two adjacent runs can never overlap
-  // regardless of how each run's own idealCenterOf pulls it. An imprecise
-  // reservation can only cost alignment quality (a run landing further
-  // from its true anchor than it would with perfect foreknowledge of every
-  // real position two phases away) — never a structural overlap.
-  function positionRuns(data, runsByGen, reserved, widths, maxGen, spouseEdges, clusterOf) {
-    const centers = new Map();
-    let maxRight = 0;
-    for (let g = 0; g <= maxGen; g += 1) {
-      const runs = runsByGen.get(g) || [];
-      let cursor = 0;
-      runs.forEach((run, idx) => {
-        const w = reserved.get(run);
-        const idealCenter = idealCenterOf(data, run, centers);
-        const targetLeft = idealCenter !== null ? idealCenter - w / 2 : null;
-        let left;
-        if (idx === 0) {
-          // Not clamped to 0 here — a row's leading run is sometimes
-          // pulled slightly negative on purpose when its ideal center
-          // sits further left than x=0 (e.g. a narrow ancestor row above
-          // a much wider descendant row). Clamping here would silently
-          // swallow that room right back up; instead the whole canvas
-          // gets shifted back into non-negative space once, after
-          // everything is placed (below), which preserves it.
-          left = targetLeft !== null ? targetLeft : 0;
-        } else {
-          const prevRun = runs[idx - 1];
-          const gap = gapBetween(
-            prevRun.members[prevRun.members.length - 1],
-            run.members[0],
-            spouseEdges, clusterOf, data, widths,
-          );
-          const minLeft = cursor + gap;
-          left = targetLeft !== null ? Math.max(minLeft, targetLeft) : minLeft;
+    // Initial order: depth-first walk of the family graph (partners, then
+    // children oldest-first, then parents), so relatives start out close
+    // together and siblings start in birth order.
+    const initialOrder = (startIds) => {
+      const seen = new Set();
+      const seqByRow = Array.from({ length: R + 1 }, () => []);
+      const visit = (id) => {
+        const stack = [id];
+        while (stack.length) {
+          const cur = stack.pop();
+          if (seen.has(cur)) continue;
+          seen.add(cur);
+          seqByRow[g.items.get(cur).r].push(cur);
+          const next = [];
+          (g.spouse.get(cur) || []).forEach((s) => next.push(s));
+          g.down.get(cur).forEach((c) => {
+            c.tops.forEach((t) => next.push(t));
+            const kids = [...c.bottoms].sort((a, b) => {
+              const da = g.items.get(a).kind === 'dummy', db = g.items.get(b).kind === 'dummy';
+              if (da || db) return da - db;
+              return birthOrderCompare(data, a, b);
+            });
+            kids.forEach((k) => next.push(k));
+          });
+          g.up.get(cur).forEach((c) => c.tops.forEach((t) => next.push(t)));
+          for (let i = next.length - 1; i >= 0; i -= 1) if (!seen.has(next[i])) stack.push(next[i]);
         }
-        const right = left + w;
-        cursor = right;
-        maxRight = Math.max(maxRight, right);
-        const y = g * (NODE_H + ROW_GAP) + NODE_H / 2;
-        placeRunMembers(run, left, widths, spouseEdges, clusterOf, data, y, centers);
+      };
+      startIds.forEach(visit);
+      g.items.forEach((_, id) => visit(id));
+      for (let r = 0; r <= R; r += 1) {
+        const idx = new Map(seqByRow[r].map((id, i) => [id, i]));
+        const blocks = g.blocks.filter((b) => b.r === r);
+        blocks.forEach((b) => { b.a = 0; b.first = Math.min(...b.members.map((m) => idx.get(m))); });
+        rows[r] = blocks.sort((a, b) => a.first - b.first);
+        updatePos(r);
+      }
+    };
+
+    // Barycenter reordering of row r against its neighbor row (above for
+    // dir 'down', below for 'up'). A block with no relatives in that
+    // direction keeps its current position as its key (both scales are
+    // normalized to 0..1, so the comparison is meaningful).
+    const reorder = (r, dir) => {
+      const nb = dir === 'down' ? pos[r - 1] : pos[r + 1];
+      const norm = (m, id) => (m.get(id) + 0.5) / m.size;
+      const keyOf = (id) => {
+        const conns = (dir === 'down' ? g.up.get(id) : g.down.get(id)).filter((c) => c.tops.length && c.bottoms.length);
+        const vals = conns.map((c) => mean((dir === 'down' ? c.tops : c.bottoms).map((x) => norm(nb, x))));
+        return vals.length ? mean(vals) : null;
+      };
+      const entries = rows[r].map((b, i) => {
+        const keys = new Map();
+        b.members.forEach((m) => { const k = keyOf(m); if (k !== null) keys.set(m, k); });
+        const key = keys.size ? mean([...keys.values()]) : mean(b.members.map((m) => norm(pos[r], m)));
+        if (b.alts.length > 1 && keys.size > 1) {
+          const inv = (alt) => {
+            const ks = alt.filter((m) => keys.has(m)).map((m) => keys.get(m));
+            let n = 0;
+            for (let i2 = 0; i2 < ks.length; i2 += 1) for (let j = i2 + 1; j < ks.length; j += 1) if (ks[i2] > ks[j]) n += 1;
+            return n;
+          };
+          let bestA = b.a, bestInv = inv(b.alts[b.a]);
+          b.alts.forEach((alt, ai) => { const v = inv(alt); if (v < bestInv) { bestInv = v; bestA = ai; } });
+          b.a = bestA;
+        }
+        return { b, key, i };
       });
-    }
+      entries.sort((x, y) => (x.key - y.key) || (x.i - y.i));
+      rows[r] = entries.map((e) => e.b);
+      updatePos(r);
+    };
 
-    let minLeftEdge = 0;
-    centers.forEach((c, id) => {
-      const w = widths.get(id) || MIN_TEXT_W;
-      minLeftEdge = Math.min(minLeftEdge, c.x - w / 2);
+    // Local search: swap neighboring blocks / try other arrangements,
+    // keeping a change only when it strictly improves the cost.
+    // Local search: swap neighboring blocks / try other arrangements,
+    // keeping a change only when it strictly improves the cost. Rows are
+    // revisited only while they or a neighbor keep improving.
+    const localSearch = (startRows) => {
+      const queued = new Set(startRows || rows.map((_, r) => r));
+      let budget = 30 * (R + 1);
+      while (queued.size && budget > 0) {
+        budget -= 1;
+        const r = Math.min(...queued);
+        queued.delete(r);
+        const row = rows[r];
+        let cur = rowCost(r), improved = false;
+        for (let i = 0; i < row.length; i += 1) {
+          const b = row[i];
+          for (let ai = 0; ai < b.alts.length; ai += 1) {
+            if (ai === b.a) continue;
+            const old = b.a;
+            b.a = ai; updatePos(r);
+            const c = rowCost(r);
+            if (c < cur) { cur = c; improved = true; } else { b.a = old; updatePos(r); }
+          }
+          if (i + 1 < row.length) {
+            [row[i], row[i + 1]] = [row[i + 1], row[i]]; updatePos(r);
+            const c = rowCost(r);
+            if (c < cur) { cur = c; improved = true; } else { [row[i], row[i + 1]] = [row[i + 1], row[i]]; updatePos(r); }
+          }
+        }
+        if (improved) [r - 1, r, r + 1].forEach((q) => { if (q >= 0 && q <= R) queued.add(q); });
+      }
+    };
+
+    const run = (startIds) => {
+      initialOrder(startIds);
+      let best = snapshot(), bestCost = totalCost();
+      for (let s = 0; s < MAX_SWEEPS && bestCost > 0; s += 1) {
+        for (let r = 1; r <= R; r += 1) reorder(r, 'down');
+        for (let r = R - 1; r >= 0; r -= 1) reorder(r, 'up');
+        const c = totalCost();
+        if (c < bestCost) { bestCost = c; best = snapshot(); }
+      }
+      restore(best);
+      localSearch();
+      return { snap: snapshot(), cost: totalCost() };
+    };
+
+    // A few differently-seeded starts; keep the best.
+    const persons = [...g.items.values()].filter((it) => it.kind === 'person').map((it) => it.id);
+    const byAge = [...persons].sort((a, b) => (g.items.get(a).r - g.items.get(b).r) || birthOrderCompare(data, a, b));
+    const rand = mulberry32(persons.length * 7919 + g.conns.length);
+    const starts = [[byAge[0]], [byAge[byAge.length - 1]], [...byAge].reverse()];
+    for (let i = 0; i < 3; i += 1) starts.push([byAge[Math.floor(rand() * byAge.length)]]);
+    let best = null;
+    starts.forEach((st) => {
+      if (best && best.cost === 0) return;
+      const res = run(st);
+      if (!best || res.cost < best.cost) best = res;
     });
-    if (minLeftEdge < 0) {
-      const shift = -minLeftEdge;
-      centers.forEach((c) => { c.x += shift; });
-      maxRight += shift;
+    restore(best.snap);
+
+    // Iterated local search: some improvements need several coordinated
+    // moves (e.g. swapping two families in one row only pays off once
+    // their children below have followed), which single improving steps
+    // can't reach. Randomly perturb one row, re-run the local search, and
+    // keep the result if it's no worse. The iteration count depends only
+    // on the size of the tree, so the drawing is fully deterministic.
+    let bestCost = best.cost;
+    const iterations = Math.max(20, Math.min(ORDER_ILS_MAX, Math.round(ORDER_ILS_WORK / Math.max(1, g.items.size))));
+    for (let it = 0; it < iterations && bestCost > 0; it += 1) {
+      const candidates = rows.map((row, r) => r).filter((r) => rows[r].length > 1);
+      if (!candidates.length) break;
+      const r = candidates[Math.floor(rand() * candidates.length)];
+      const row = rows[r];
+      const i = Math.floor(rand() * row.length);
+      let j = Math.floor(rand() * (row.length - 1));
+      if (j >= i) j += 1;
+      if (rand() < 0.5) [row[i], row[j]] = [row[j], row[i]];
+      else { const [lo, hi] = i < j ? [i, j] : [j, i]; rows[r] = [...row.slice(0, lo), ...row.slice(lo, hi + 1).reverse(), ...row.slice(hi + 1)]; }
+      updatePos(r);
+      localSearch([r - 1, r, r + 1].filter((q) => q >= 0 && q <= R));
+      const c = totalCost();
+      if (c <= bestCost) { bestCost = c; best = { snap: snapshot(), cost: c }; } else restore(best.snap);
+    }
+    restore(best.snap);
+    return rows.map(rowSeq);
+  }
+
+  // ---- Step 4: coordinates --------------------------------------------
+
+  function positionComponent(g, seqs) {
+    const x = new Map();
+    const rowOf = new Map();
+    const indexOf = new Map();
+    seqs.forEach((seq, r) => seq.forEach((id, i) => { rowOf.set(id, r); indexOf.set(id, i); }));
+    const w = (id) => g.items.get(id).w;
+    const isDummy = (id) => g.items.get(id).kind === 'dummy';
+    const siblings = (a, b) => g.up.get(a).some((c) => c.bottoms.includes(b));
+    const minSep = (a, b) => {
+      let gap;
+      if (isDummy(a) || isDummy(b)) gap = DUMMY_GAP;
+      else if ((g.spouse.get(a) || new Set()).has(b)) gap = PARTNER_GAP;
+      else if (siblings(a, b)) gap = SIBLING_GAP;
+      else gap = FAMILY_GAP;
+      return w(a) / 2 + w(b) / 2 + gap;
+    };
+    const seps = seqs.map((seq) => seq.slice(1).map((id, i) => minSep(seq[i], id)));
+    seqs.forEach((seq, r) => {
+      let cx = 0;
+      seq.forEach((id, i) => { if (i > 0) cx += seps[r][i - 1]; x.set(id, cx); });
+    });
+
+    // Two partners side by side attach their children at the middle of the
+    // gap between their boxes; anything else attaches at the mean center.
+    const adjacentPair = (c) => c.tops.length === 2 && rowOf.get(c.tops[0]) === rowOf.get(c.tops[1])
+      && Math.abs(indexOf.get(c.tops[0]) - indexOf.get(c.tops[1])) === 1;
+    const anchorX = (c) => {
+      if (adjacentPair(c)) {
+        const [a, b] = c.tops;
+        const [l, rr] = x.get(a) <= x.get(b) ? [a, b] : [b, a];
+        return ((x.get(l) + w(l) / 2) + (x.get(rr) - w(rr) / 2)) / 2;
+      }
+      return mean(c.tops.map((t) => x.get(t)));
+    };
+    const pullOf = (a, b) => {
+      if (isDummy(a) || isDummy(b)) return 0.05;
+      if ((g.spouse.get(a) || new Set()).has(b)) return 5;
+      return siblings(a, b) ? 0.3 : 0.05;
+    };
+    const weightOf = (c) => (c.tops.some(isDummy) || c.bottoms.some(isDummy) ? 4 : 1);
+
+    const solveRow = (r) => {
+      const seq = seqs[r];
+      if (!seq.length) return 0;
+      const n = seq.length;
+      const target = new Array(n), weight = new Array(n);
+      seq.forEach((id, i) => {
+        let sw = extraW.get(id) || 0, swt = extraWT.get(id) || 0;
+        g.up.get(id).forEach((c) => {
+          if (!c.tops.length) return;
+          const wt = weightOf(c);
+          sw += wt; swt += wt * anchorX(c);
+        });
+        g.down.get(id).forEach((c) => {
+          if (!c.bottoms.length) return;
+          const wt = weightOf(c);
+          const center = mean(c.bottoms.map((b) => x.get(b)));
+          sw += wt; swt += wt * (center + x.get(id) - anchorX(c));
+        });
+        // Mild pull toward each row neighbor at minimum distance, strongest
+        // between partners: removes slack nothing else needs, so couples
+        // stay tight and unrelated space doesn't accumulate.
+        if (i > 0) {
+          const wt = pullOf(seq[i - 1], id);
+          sw += wt; swt += wt * (x.get(seq[i - 1]) + seps[r][i - 1]);
+        }
+        if (i + 1 < n) {
+          const wt = pullOf(id, seq[i + 1]);
+          sw += wt; swt += wt * (x.get(seq[i + 1]) - seps[r][i]);
+        }
+        if (sw === 0) { sw = 1e-3; swt = 1e-3 * x.get(id); }
+        target[i] = swt / sw; weight[i] = sw;
+      });
+      // Weighted isotonic regression (pool adjacent violators) on
+      // y_i = x_i - S_i, where S_i is the minimum offset of item i from
+      // item 0: minimizes sum w_i (x_i - target_i)^2 subject to every
+      // minimum gap, exactly.
+      const S = [0];
+      for (let i = 1; i < n; i += 1) S.push(S[i - 1] + seps[r][i - 1]);
+      const stack = [];
+      for (let i = 0; i < n; i += 1) {
+        stack.push({ w: weight[i], wy: weight[i] * (target[i] - S[i]), count: 1 });
+        while (stack.length > 1) {
+          const top = stack[stack.length - 1], prev = stack[stack.length - 2];
+          if (prev.wy / prev.w <= top.wy / top.w) break;
+          stack.pop();
+          prev.w += top.w; prev.wy += top.wy; prev.count += top.count;
+        }
+      }
+      let moved = 0, i = 0;
+      stack.forEach((blk) => {
+        const m = blk.wy / blk.w;
+        for (let k = 0; k < blk.count; k += 1, i += 1) {
+          const nx = m + S[i];
+          moved = Math.max(moved, Math.abs(nx - x.get(seq[i])));
+          x.set(seq[i], nx);
+        }
+      });
+      return moved;
+    };
+
+    // Keeps every family's drop point out from under a neighboring family's
+    // horizontal line in the same gap: if it sat inside, the two lines would
+    // have to cross whichever lane order is picked later. Penalty terms,
+    // re-derived from the current positions each iteration, push the
+    // offending children and parents apart. Pairs that enclose each other's
+    // drop points cross anyway, so they're left alone.
+    const extraW = new Map(), extraWT = new Map();
+    const connsByGap = new Map();
+    g.conns.forEach((c) => {
+      if (!c.tops.length || !c.bottoms.length) return;
+      if (!connsByGap.has(c.r)) connsByGap.set(c.r, []);
+      connsByGap.get(c.r).push(c);
+    });
+    const addPull = (id, t, wt) => {
+      extraW.set(id, (extraW.get(id) || 0) + wt);
+      extraWT.set(id, (extraWT.get(id) || 0) + wt * t);
+    };
+    const updateSeparationPulls = () => {
+      extraW.clear(); extraWT.clear();
+      connsByGap.forEach((conns) => {
+        const info = conns.map((c) => {
+          const a = anchorX(c);
+          const xs = c.bottoms.map((b) => x.get(b));
+          return { c, a, min: Math.min(a, ...xs), max: Math.max(a, ...xs) };
+        });
+        info.forEach((F) => info.forEach((G) => {
+          if (F === G || !(G.a > F.min + 1 && G.a < F.max - 1)) return;
+          if (F.a > G.min + 1 && F.a < G.max - 1) return;
+          const right = F.a < G.a;
+          const limit = right ? G.a - DROP_CLEARANCE : G.a + DROP_CLEARANCE;
+          F.c.bottoms.forEach((b) => {
+            const bx = x.get(b);
+            const over = right ? bx - limit : limit - bx;
+            if (over <= 0) return;
+            addPull(b, limit, SEPARATION_WEIGHT);
+            G.c.tops.forEach((t) => addPull(t, x.get(t) + (right ? over : -over), SEPARATION_WEIGHT));
+          });
+        }));
+      });
+    };
+
+    for (let iter = 0; iter < MAX_POSITION_ITERS; iter += 1) {
+      updateSeparationPulls();
+      let moved = 0;
+      for (let r = 0; r < seqs.length; r += 1) moved = Math.max(moved, solveRow(r));
+      for (let r = seqs.length - 1; r >= 0; r -= 1) moved = Math.max(moved, solveRow(r));
+      if (moved < 0.05) break;
     }
 
-    return { centers, totalWidth: maxRight };
+    let minX = Infinity, maxX = -Infinity;
+    x.forEach((v, id) => { minX = Math.min(minX, v - w(id) / 2); maxX = Math.max(maxX, v + w(id) / 2); });
+    x.forEach((v, id) => x.set(id, v - minX));
+    return { x, width: maxX - minX, adjacentPair };
   }
+
+  // ---- Step 5: lanes --------------------------------------------------
+
+  // Crossings caused if connector A's lane is ABOVE connector B's: A's
+  // horizontal line is crossed by B's vertical drops from B's parents,
+  // and A's vertical drops to its children cross B's horizontal line. A
+  // drop of A landing exactly on B's drop line would run along it — that
+  // is heavily penalized, since hiding one line under another is worse
+  // than a crossing.
+  function laneCost(A, B) {
+    const eps = 0.5;
+    const inside = (v, c) => v > c.min + eps && v < c.max - eps;
+    let cost = 0;
+    B.topXs.forEach((t) => { if (inside(t, A)) cost += 1; });
+    A.botXs.forEach((b) => { if (inside(b, B)) cost += 1; });
+    B.topXs.forEach((t) => A.botXs.forEach((b) => { if (Math.abs(t - b) < 1) cost += 100; }));
+    return cost;
+  }
+
+  // Minimum-cost vertical order of connectors that interact (a linear
+  // ordering problem): exact dynamic programming over subsets for up to 12
+  // connectors, greedy + adjacent swaps beyond that.
+  function orderLanes(group) {
+    const n = group.length;
+    if (n === 1) return group;
+    const c = group.map((a) => group.map((b) => (a === b ? 0 : laneCost(a, b))));
+    if (n <= 12) {
+      const full = (1 << n) - 1;
+      const dp = new Float64Array(1 << n).fill(Infinity);
+      const choice = new Int8Array(1 << n).fill(-1);
+      dp[0] = 0;
+      for (let S = 0; S < full; S += 1) {
+        if (dp[S] === Infinity) continue;
+        for (let j = 0; j < n; j += 1) {
+          if (S & (1 << j)) continue;
+          let add = 0;
+          for (let i = 0; i < n; i += 1) if (S & (1 << i)) add += c[i][j];
+          const T = S | (1 << j);
+          if (dp[S] + add < dp[T]) { dp[T] = dp[S] + add; choice[T] = j; }
+        }
+      }
+      const order = [];
+      let S = full;
+      while (S) { const j = choice[S]; order.unshift(group[j]); S &= ~(1 << j); }
+      return order;
+    }
+    const idx = group.map((_, i) => i);
+    const placed = [];
+    const rest = new Set(idx);
+    while (rest.size) {
+      let bestJ = -1, bestV = Infinity;
+      rest.forEach((j) => {
+        let v = 0;
+        placed.forEach((i) => { v += c[i][j]; });
+        rest.forEach((k) => { if (k !== j) v += c[j][k] - c[k][j]; });
+        if (v < bestV) { bestV = v; bestJ = j; }
+      });
+      placed.push(bestJ); rest.delete(bestJ);
+    }
+    for (let pass = 0; pass < 20; pass += 1) {
+      let improved = false;
+      for (let i = 0; i + 1 < placed.length; i += 1) {
+        const a = placed[i], b = placed[i + 1];
+        if (c[b][a] < c[a][b]) { placed[i] = b; placed[i + 1] = a; improved = true; }
+      }
+      if (!improved) break;
+    }
+    return placed.map((i) => group[i]);
+  }
+
+  // Nudges points that would coincide (two families dropping from the same
+  // person, or into the same child) apart so their lines stay separate.
+  function spreadCoincident(points) {
+    const groups = new Map();
+    points.forEach((p) => {
+      const k = Math.round(p.x);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    });
+    groups.forEach((ps) => {
+      if (ps.length < 2) return;
+      ps.sort((a, b) => a.order - b.order);
+      ps.forEach((p, i) => { p.x += (i - (ps.length - 1) / 2) * SPREAD; });
+    });
+  }
+
+  function assignLanes(gapConns) {
+    const drawn = gapConns.filter((c) => c.topXs.length && (c.botXs.length || c.topXs.length >= 2));
+    drawn.forEach((c) => {
+      const xs = [...c.topXs, ...c.botXs];
+      c.min = Math.min(...xs); c.max = Math.max(...xs);
+    });
+    drawn.sort((a, b) => (a.min - b.min) || (a.max - b.max));
+    // Interaction groups: connectors whose horizontal extents come within
+    // LANE_CLEARANCE of each other.
+    const groups = [];
+    let cur = [], curMax = -Infinity;
+    drawn.forEach((c) => {
+      if (cur.length && c.min > curMax + LANE_CLEARANCE) { groups.push(cur); cur = []; curMax = -Infinity; }
+      cur.push(c); curMax = Math.max(curMax, c.max);
+    });
+    if (cur.length) groups.push(cur);
+    let levels = 0;
+    groups.forEach((grp) => {
+      const order = orderLanes(grp);
+      const placed = [];
+      order.forEach((c) => {
+        let lvl = 0;
+        placed.forEach((p) => {
+          if (c.min <= p.max + LANE_CLEARANCE && p.min <= c.max + LANE_CLEARANCE) lvl = Math.max(lvl, p.level + 1);
+        });
+        c.level = lvl;
+        placed.push(c);
+        levels = Math.max(levels, lvl + 1);
+      });
+    });
+    return levels;
+  }
+
+  // The layout depends only on the people's box contents (name, dates) and
+  // the unions, so the last result is reused until one of those changes —
+  // switching views or tabs doesn't pay for the order search again.
+  let layoutCache = { key: null, result: null };
 
   function layout(data, t) {
     const widths = new Map();
@@ -1124,249 +931,169 @@ const ViewTree = (() => {
       lines.set(p.id, l);
       widths.set(p.id, nodeWidth(l));
     });
-
-    const { maxGen, blocksByGen, spouseEdges, clusterOf } = computeBlockOrder(data);
-    const runsByGen = buildRunsByGen(data, blocksByGen, maxGen);
-    const runMapByGen = buildRunMapByGen(runsByGen, maxGen);
-    const reserved = reserveRunWidths(data, runsByGen, runMapByGen, maxGen, widths, spouseEdges, clusterOf);
-    const { centers, totalWidth } = positionRuns(data, runsByGen, reserved, widths, maxGen, spouseEdges, clusterOf);
-
-    return {
-      centers, widths, lines, maxGen,
-      totalWidth,
-      totalHeight: maxGen * (NODE_H + ROW_GAP) + NODE_H,
-    };
+    const key = JSON.stringify([
+      [...lines.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
+      DataModel.allUnions(data).map((u) => [u.id, u.partners, u.children, u.status]),
+    ]);
+    if (layoutCache.key !== key) layoutCache = { key, result: computeLayout(data, widths, lines) };
+    return layoutCache.result;
   }
 
-  // ---- Rendering-only connector bend-height scheduling --------------------
-  //
-  // Every parent-to-child connector bends once, at some height between the
-  // two rows, then runs horizontal to the child's own column. Two DIFFERENT
-  // unions sharing a row gap (most commonly a half-sibling split — some of a
-  // parent's children from one union, the rest from another) used to always
-  // bend at the exact same fixed halfway height, purely because they're the
-  // same two rows apart — nothing to do with whether their horizontal runs
-  // actually reach into each other's space. When they do reach into each
-  // other's space, sharing a bend height draws both lines on the same path
-  // for a stretch, reading as one line overlapping another (see
-  // KNOWN_ISSUE_tree_layout_overlap.md, "residual issue 1").
-  //
-  // This entire section is rendering-only: it decides which fraction of a
-  // row gap each union's connector bends at, never any x/y position that
-  // layout() computed. A first attempt that just staggered heights by reach
-  // width (widest bends earliest) fixed the pair it targeted but introduced
-  // brand-new genuine line crossings against OTHER, unrelated unions
-  // sharing the same row gap — this replaces that with an actual
-  // no-crossings search across every union in a row gap at once, not just
-  // pairwise, verified by checking real line-segment intersections (not an
-  // interval-overlap approximation) between every candidate pair.
+  function computeLayout(data, widths, lines) {
 
-  // The three straight-line pieces of one union's connector to one specific
-  // child, at a given bend height — used only to test for a real geometric
-  // intersection between two connectors, never to decide any layout
-  // position.
-  function connectorSegments(drop, fraction) {
-    const midY = drop.anchorY + (drop.childY - drop.anchorY) * fraction;
-    const segs = [];
-    drop.childXs.forEach((cx) => {
-      segs.push([[drop.anchorX, drop.anchorY], [drop.anchorX, midY]]);
-      segs.push([[drop.anchorX, midY], [cx, midY]]);
-      segs.push([[cx, midY], [cx, drop.childY]]);
+    const gen = computeGenerations(data);
+    const fams = buildFamilies(data);
+    const personIds = DataModel.allPeople(data).map((p) => p.id);
+    const components = connectedComponents(personIds, fams)
+      .map((ids) => ids.sort((a, b) => birthOrderCompare(data, a, b)));
+    // Biggest part of the tree first, then the rest left to right.
+    components.sort((a, b) => b.length - a.length);
+
+    const xAll = new Map();
+    const rowItems = new Map();
+    const allConns = [];
+    const itemInfo = new Map();
+    let cursor = 0;
+    components.forEach((ids) => {
+      const g = buildComponentGraph(data, ids, fams, gen, widths);
+      const seqs = orderComponent(data, g);
+      const { x, width, adjacentPair } = positionComponent(g, seqs);
+      x.forEach((v, id) => xAll.set(id, v + cursor));
+      g.items.forEach((it, id) => itemInfo.set(id, it));
+      seqs.forEach((seq, r) => {
+        if (!rowItems.has(r)) rowItems.set(r, []);
+        seq.forEach((id) => rowItems.get(r).push(id));
+      });
+      g.conns.forEach((c) => { c.adjacent = adjacentPair(c); allConns.push(c); });
+      cursor += width + COMPONENT_GAP;
     });
-    return segs;
-  }
 
-  // A real visual conflict between two straight segments — either a proper
-  // crossing (they intersect at a single interior point), or the specific
-  // case a plain crossing test misses entirely: two DIFFERENT segments
-  // running along the exact same line with overlapping extents (e.g. two
-  // unions' horizontal jogs sharing a height — mathematically "parallel,
-  // no intersection point" to a standard line-intersection test, but
-  // exactly the coincident-line visual overlap this scheduling exists to
-  // avoid). Every segment here is axis-aligned (purely horizontal or
-  // vertical, see connectorSegments), so the collinear case only ever
-  // needs a same-x or same-y overlap check, never a general line-equation
-  // comparison.
-  function segmentsConflict(a, b) {
-    const [[x1, y1], [x2, y2]] = a;
-    const [[x3, y3], [x4, y4]] = b;
-    const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
-    if (d !== 0) {
-      const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
-      const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
-      return t > 0.001 && t < 0.999 && u > 0.001 && u < 0.999;
-    }
-    const aVertical = Math.abs(x1 - x2) < 0.01;
-    const bVertical = Math.abs(x3 - x4) < 0.01;
-    if (aVertical !== bVertical) return false;
-    if (aVertical) {
-      if (Math.abs(x1 - x3) > 0.01) return false;
-      return Math.min(y1, y2) < Math.max(y3, y4) - 0.01 && Math.min(y3, y4) < Math.max(y1, y2) - 0.01;
-    }
-    if (Math.abs(y1 - y3) > 0.01) return false;
-    return Math.min(x1, x2) < Math.max(x3, x4) - 0.01 && Math.min(x3, x4) < Math.max(x1, x2) - 0.01;
-  }
+    let maxRow = 0;
+    rowItems.forEach((_, r) => { maxRow = Math.max(maxRow, r); });
+    const w = (id) => itemInfo.get(id).w;
 
-  function connectorsConflict(dropA, fracA, dropB, fracB) {
-    const segsA = connectorSegments(dropA, fracA);
-    const segsB = connectorSegments(dropB, fracB);
-    return segsA.some((sa) => segsB.some((sb) => segmentsConflict(sa, sb)));
-  }
-
-  // One entry per union that actually draws a parent-to-child connector —
-  // everything computeBendFractions/connectorSegments need, grouped by
-  // which specific row gap (anchorY -> childY) it belongs to, since only
-  // unions sharing a gap can ever visually compete for the same bend
-  // height.
-  function computeConnectorDrops(data, centers, widths) {
-    const dropByUnionId = new Map();
-    const dropsByGap = new Map();
-    DataModel.allUnions(data).forEach((u) => {
-      const partnerEntries = u.partners.map((p) => ({ id: p, c: centers.get(p) })).filter((e) => e.c);
-      const partnerCenters = partnerEntries.map((e) => e.c);
-      if (!u.children.length || !partnerCenters.length) return;
-      let anchorX;
-      if (partnerEntries.length === 2) {
-        const [pa, pb] = partnerEntries;
-        const wa = widths.get(pa.id) || MIN_TEXT_W;
-        const wb = widths.get(pb.id) || MIN_TEXT_W;
-        const left = pa.c.x <= pb.c.x ? { x: pa.c.x, w: wa } : { x: pb.c.x, w: wb };
-        const right = pa.c.x <= pb.c.x ? { x: pb.c.x, w: wb } : { x: pa.c.x, w: wa };
-        anchorX = ((left.x + left.w / 2) + (right.x - right.w / 2)) / 2;
-      } else {
-        anchorX = partnerCenters.reduce((sum, c) => sum + c.x, 0) / partnerCenters.length;
-      }
-      const anchorY = partnerCenters.reduce((sum, c) => sum + c.y, 0) / partnerCenters.length;
-      const childCenters = u.children.map((cid) => centers.get(cid)).filter(Boolean);
-      if (!childCenters.length) return;
-      const drop = {
-        anchorX, anchorY, childY: childCenters[0].y, childXs: childCenters.map((c) => c.x), fraction: 0.5,
-      };
-      const gapKey = `${anchorY}|${drop.childY}`;
-      if (!dropsByGap.has(gapKey)) dropsByGap.set(gapKey, []);
-      dropsByGap.get(gapKey).push(drop);
-      dropByUnionId.set(u.id, drop);
+    // Geometry points of every connector (x only; y comes from lanes).
+    const connsByGap = new Map();
+    allConns.forEach((c) => {
+      if (!connsByGap.has(c.r)) connsByGap.set(c.r, []);
+      connsByGap.get(c.r).push(c);
     });
-    return { dropByUnionId, dropsByGap };
-  }
-
-  // A handful of candidate bend heights, tried closest-to-default first —
-  // deviating from the plain 50% midpoint only for whichever unions
-  // actually need it to avoid a real crossing, so an ordinary row gap with
-  // no competing union looks exactly as it always has.
-  const BEND_FRACTION_CANDIDATES = [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
-
-  // For each row gap with 2+ competing unions, finds a combination of bend
-  // heights (one per union, from BEND_FRACTION_CANDIDATES) with zero real
-  // conflicts between any pair — checked directly via connectorsConflict,
-  // not approximated from interval overlap alone, so this can't repeat an
-  // earlier attempt's mistake of fixing one pair while creating a new
-  // conflict against a third, unrelated union sharing the same gap.
-  //
-  // A simple one-pass greedy (decide each union in turn, keep whatever
-  // height doesn't conflict with anything already decided) is NOT enough
-  // here: unlike a plain 1-D interval-overlap problem (where processing by
-  // start position and always taking the first free "color" is provably
-  // optimal), a candidate height here interacts with the OTHER union's
-  // OWN chosen height too — a pair can conflict at one combination of
-  // heights and not another. A choice that looks conflict-free against
-  // whatever came before can still leave no good option for something
-  // decided later. Confirmed empirically: a first-pass greedy version of
-  // this eliminated the originally-reported same-height overlap but
-  // introduced 3 new genuine line crossings elsewhere in the real,
-  // reported data (unrelated Lakes/Ertürk unions sharing the same gap).
-  //
-  // Exhaustive search over every combination instead — small groups (this
-  // app's real data never exceeds a handful of unions in one row gap) times
-  // a small candidate set is a trivial search at render time, and stops
-  // the instant a zero-conflict combination is found. Falls back to the
-  // simpler greedy pass only for an unusually large group (more than
-  // EXHAUSTIVE_SEARCH_LIMIT unions sharing one gap), where a full search
-  // would no longer be cheap — a same-height overlap in that rare case is
-  // no worse than what every union already did before this existed.
-  const EXHAUSTIVE_SEARCH_LIMIT = 6;
-
-  function greedyBendFractions(drops) {
-    const ordered = [...drops].sort((a, b) => a.anchorX - b.anchorX);
-    const decided = [];
-    ordered.forEach((drop) => {
-      let best = BEND_FRACTION_CANDIDATES[0];
-      let bestConflicts = Infinity;
-      for (const candidate of BEND_FRACTION_CANDIDATES) {
-        const conflicts = decided.filter((other) => connectorsConflict(drop, candidate, other, other.fraction)).length;
-        if (conflicts === 0) { best = candidate; break; }
-        if (conflicts < bestConflicts) { bestConflicts = conflicts; best = candidate; }
-      }
-      drop.fraction = best;
-      decided.push(drop);
-    });
-  }
-
-  // Whether candidate height `ci` for drop `i` conflicts with candidate
-  // height `cj` for drop `j` depends only on that ONE pair, never on
-  // anything else in the group — so every pair's conflict, for every
-  // combination of the two's candidate heights, can be computed exactly
-  // once up front (n*(n-1)/2 pairs times F*F combinations — small even at
-  // this function's own group-size cap) and then just looked up during the
-  // search below, instead of re-doing the actual line-segment geometry on
-  // every single combination the search considers.
-  function buildPairConflictTable(drops) {
-    const F = BEND_FRACTION_CANDIDATES.length;
-    const segsByDropAndCandidate = drops.map((d) => BEND_FRACTION_CANDIDATES.map((f) => connectorSegments(d, f)));
-    const conflictBetweenSegs = (segsA, segsB) => segsA.some((sa) => segsB.some((sb) => segmentsConflict(sa, sb)));
-    const table = new Map();
-    for (let i = 0; i < drops.length; i += 1) {
-      for (let j = i + 1; j < drops.length; j += 1) {
-        const row = [];
-        for (let ci = 0; ci < F; ci += 1) {
-          row.push(Array.from({ length: F }, (_, cj) => conflictBetweenSegs(
-            segsByDropAndCandidate[i][ci],
-            segsByDropAndCandidate[j][cj],
-          )));
+    const gapLevels = new Map();
+    connsByGap.forEach((conns, r) => {
+      const topPts = [], botPts = [];
+      conns.forEach((c, ci) => {
+        c.topPts = [];
+        c.botPts = [];
+        if (c.adjacent) {
+          const [a, b] = c.tops;
+          const [l, rr] = xAll.get(a) <= xAll.get(b) ? [a, b] : [b, a];
+          // Anywhere in the gap between the two boxes works as the drop
+          // point; lean toward the children to avoid a needless jog.
+          const lo = xAll.get(l) + w(l) / 2 + 4, hi = xAll.get(rr) - w(rr) / 2 - 4;
+          const want = c.bottoms.length ? mean(c.bottoms.map((id) => xAll.get(id))) : (lo + hi) / 2;
+          c.topPts.push({ x: Math.min(hi, Math.max(lo, want)), mid: true, lo, hi, order: ci });
+        } else {
+          c.tops.forEach((id) => c.topPts.push({ x: xAll.get(id), id, order: ci }));
         }
-        table.set(`${i},${j}`, row);
-      }
-    }
-    return (i, ci, j, cj) => (i < j ? table.get(`${i},${j}`)[ci][cj] : table.get(`${j},${i}`)[cj][ci]);
-  }
-
-  // Depth-first search over every combination of candidate heights, one
-  // per drop, using the precomputed pair table above so exploring the
-  // full combination space is cheap integer lookups, not geometry. Prunes
-  // as soon as a partial assignment already has at least as many conflicts
-  // as the best complete assignment found so far, and stops immediately
-  // once a zero-conflict combination is found.
-  function exhaustiveBendFractions(drops) {
-    const n = drops.length;
-    const F = BEND_FRACTION_CANDIDATES.length;
-    const conflictOf = buildPairConflictTable(drops);
-    const assignment = new Array(n).fill(0);
-    let best = assignment.slice();
-    let bestConflictCount = Infinity;
-    const search = (idx, conflictsSoFar) => {
-      if (idx === n) {
-        if (conflictsSoFar < bestConflictCount) { bestConflictCount = conflictsSoFar; best = assignment.slice(); }
-        return bestConflictCount === 0;
-      }
-      for (let ci = 0; ci < F; ci += 1) {
-        let extra = 0;
-        for (let j = 0; j < idx; j += 1) if (conflictOf(idx, ci, j, assignment[j])) extra += 1;
-        if (conflictsSoFar + extra >= bestConflictCount) continue;
-        assignment[idx] = ci;
-        if (search(idx + 1, conflictsSoFar + extra)) return true;
-      }
-      return false;
-    };
-    search(0, 0);
-    drops.forEach((d, i) => { d.fraction = BEND_FRACTION_CANDIDATES[best[i]]; });
-  }
-
-  function assignBendFractions(dropsByGap) {
-    dropsByGap.forEach((drops) => {
-      if (drops.length <= 1) return;
-      if (drops.length <= EXHAUSTIVE_SEARCH_LIMIT) exhaustiveBendFractions(drops);
-      else greedyBendFractions(drops);
+        c.bottoms.forEach((id) => c.botPts.push({ x: xAll.get(id), id, order: ci }));
+        c.topPts.forEach((p) => topPts.push(p));
+        c.botPts.forEach((p) => botPts.push(p));
+      });
+      // A family with one child and one attachment above needs no
+      // horizontal line at all if the two can meet vertically: the drop
+      // may attach anywhere along the middle half of a box edge.
+      conns.forEach((c) => {
+        if (c.topPts.length !== 1 || c.botPts.length !== 1) return;
+        const span = (p) => {
+          if (p.mid) return [p.lo, p.hi];
+          const it = itemInfo.get(p.id);
+          return [xAll.get(p.id) - it.w / 4, xAll.get(p.id) + it.w / 4];
+        };
+        const [t0, t1] = span(c.topPts[0]), [b0, b1] = span(c.botPts[0]);
+        const lo = Math.max(t0, b0), hi = Math.min(t1, b1);
+        if (lo > hi) return;
+        const x = Math.min(hi, Math.max(lo, xAll.get(c.botPts[0].id)));
+        c.topPts[0].x = x; c.botPts[0].x = x;
+      });
+      spreadCoincident(topPts);
+      spreadCoincident(botPts);
+      conns.forEach((c) => { c.topXs = c.topPts.map((p) => p.x); c.botXs = c.botPts.map((p) => p.x); });
+      gapLevels.set(r, assignLanes(conns));
     });
+
+    // Row y positions: each gap just tall enough for its lanes.
+    const gapHeight = (r) => {
+      const L = gapLevels.get(r) || 0;
+      return Math.max(MIN_ROW_GAP, 2 * LANE_MARGIN + Math.max(0, L - 1) * LANE_SPACING);
+    };
+    const rowTop = [0];
+    for (let r = 1; r <= maxRow + 1; r += 1) rowTop.push(rowTop[r - 1] + NODE_H + gapHeight(r - 1));
+    const laneY = (r, level) => {
+      const L = gapLevels.get(r) || 1;
+      const h = gapHeight(r);
+      return rowTop[r] + NODE_H + (h - (L - 1) * LANE_SPACING) / 2 + level * LANE_SPACING;
+    };
+
+    const centers = new Map();
+    personIds.forEach((id) => {
+      const it = itemInfo.get(id);
+      centers.set(id, { x: xAll.get(id), y: rowTop[it.r] + NODE_H / 2 });
+    });
+
+    // Links: every drawn line, as axis-aligned segments grouped per family
+    // (connectors) or per couple (marriage lines).
+    const links = [];
+    allConns.forEach((c) => {
+      if (c.level === undefined) return;
+      const y = laneY(c.r, c.level);
+      const segs = [];
+      const dashTops = !c.fam.current && !c.adjacent;
+      c.topPts.forEach((p) => {
+        const y0 = p.mid ? rowTop[c.r] + NODE_H / 2 : rowTop[c.r] + NODE_H;
+        segs.push([p.x, y0, p.x, y]);
+      });
+      if (c.max - c.min > 0.5) segs.push([c.min, y, c.max, y]);
+      c.botPts.forEach((p) => {
+        const dummy = itemInfo.get(p.id).kind === 'dummy';
+        segs.push([p.x, y, p.x, rowTop[c.r + 1] + (dummy ? NODE_H : 0)]);
+      });
+      const pair = c.fam.partners.length === 2 ? `m:${[...c.fam.partners].sort().join('|')}` : c.fam.id;
+      links.push({ group: c.fam.id, pair, kind: 'family', dashed: false, segs: dashTops ? segs.slice(c.topPts.length) : segs });
+      if (dashTops) links.push({ group: c.fam.id, pair, kind: 'family', dashed: true, segs: segs.slice(0, c.topPts.length) });
+    });
+
+    // Marriage lines between partners standing side by side (one line per
+    // couple, even if they have several unions); partners in different
+    // rows get a direct line between their boxes.
+    const seenPairs = new Map();
+    fams.forEach((f) => {
+      if (f.partners.length !== 2) return;
+      const [a, b] = f.partners;
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      const entry = seenPairs.get(key);
+      if (entry) { if (f.current) entry.dashed = false; return; }
+      const ca = centers.get(a), cb = centers.get(b);
+      if (ca.y === cb.y) {
+        const seq = rowItems.get(itemInfo.get(a).r);
+        if (Math.abs(seq.indexOf(a) - seq.indexOf(b)) !== 1) return;
+        const [l, r] = ca.x <= cb.x ? [a, b] : [b, a];
+        const y = ca.y;
+        const link = { group: `m:${key}`, kind: 'marriage', dashed: !f.current, segs: [[centers.get(l).x + widths.get(l) / 2, y, centers.get(r).x - widths.get(r) / 2, y]] };
+        seenPairs.set(key, link);
+        links.push(link);
+      } else {
+        const [hi, lo] = ca.y < cb.y ? [a, b] : [b, a];
+        const ch = centers.get(hi), cl = centers.get(lo);
+        const link = { group: `m:${key}`, kind: 'marriage', dashed: !f.current, segs: [[ch.x, ch.y + NODE_H / 2, cl.x, cl.y - NODE_H / 2]] };
+        seenPairs.set(key, link);
+        links.push(link);
+      }
+    });
+
+    let totalWidth = 0;
+    xAll.forEach((v, id) => { totalWidth = Math.max(totalWidth, v + w(id) / 2); });
+    const totalHeight = rowTop[maxRow] + NODE_H + (gapLevels.has(maxRow) ? gapHeight(maxRow) : 0);
+    return { centers, widths, lines, maxGen: maxRow, totalWidth, totalHeight, links };
   }
 
   function render(container) {
@@ -1429,28 +1156,13 @@ const ViewTree = (() => {
       return;
     }
 
-    const { centers, widths, lines, totalWidth, totalHeight } = layout(data, t);
+    const { centers, widths, lines, totalWidth, totalHeight, links } = layout(data, t);
     const svg = container.querySelector('#tree-svg');
 
-    const linksHtml = [];
-    const { dropByUnionId, dropsByGap } = computeConnectorDrops(data, centers, widths);
-    assignBendFractions(dropsByGap);
-    DataModel.allUnions(data).forEach((u) => {
-      const partnerEntries = u.partners.map((p) => ({ id: p, c: centers.get(p) })).filter((e) => e.c);
-      const partnerCenters = partnerEntries.map((e) => e.c);
-      if (partnerCenters.length === 2) {
-        const [a, b] = partnerCenters;
-        linksHtml.push(`<line class="tree-link" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke-dasharray="${u.status === 'current' ? '' : '4,3'}"/>`);
-      }
-      const drop = dropByUnionId.get(u.id);
-      if (u.children.length && drop) {
-        const midY = drop.anchorY + (drop.childY - drop.anchorY) * drop.fraction;
-        u.children.forEach((cid) => {
-          const cc = centers.get(cid);
-          if (!cc) return;
-          linksHtml.push(`<path class="tree-link" d="M${drop.anchorX},${drop.anchorY} V${midY} H${cc.x} V${cc.y}"/>`);
-        });
-      }
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const linksHtml = links.map((link) => {
+      const d = link.segs.map(([x1, y1, x2, y2]) => `M${r1(x1)},${r1(y1)} L${r1(x2)},${r1(y2)}`).join(' ');
+      return `<path class="tree-link" d="${d}"${link.dashed ? ' stroke-dasharray="4,3"' : ''}/>`;
     });
 
     const photoR = PHOTO_D / 2;

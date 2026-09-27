@@ -239,15 +239,12 @@ a vendored charting library, so the app has no third-party runtime
 dependency to keep offline. Click any person's box to jump to their focus
 view.
 
-A `cytoscape.js`-based rewrite (canvas rendering, HTML photo cards) was
-tried and reverted — it looked worse on screen for no real layout benefit,
-and the actual hard problem (keeping married couples and siblings both
-visually grouped without connector lines crossing between families) is
-solved by the generation/clustering logic in `js/views/tree.js` itself,
-not by the rendering layer. See that file's comments for the reasoning,
-including why graph layout libraries like dagre couldn't help either
-(forcing two spouses onto the same row needs a "same rank" edge
-constraint dagre doesn't actually support).
+The layout keeps partners side by side and children under their parents,
+minimizes crossing lines, and gives every family's connector its own
+height between the rows, so lines of different families never run on top
+of each other (rows with many families simply get a bit taller). How it
+works, and the regression check to run after changing it, are described
+in `TREE_LAYOUT.md`.
 
 If a tree is still hard to read even with correct layout — usually because
 it blends several distantly-related family lines — **Personen
@@ -275,6 +272,9 @@ family-tree-app/
     date-fields.js      shared partial-date input widget
     ui-helpers.js      shared person-card rendering
     views/            one file per view + the person form and relationship editor
+  tools/
+    tree-layout-check.js  regression check for the Full Tree layout (see TREE_LAYOUT.md)
+    tree-test-lib.js      its geometry metrics, test scenarios and synthetic families
   i18n/
     de.js             German strings (see "Adding a second language" above)
     en.js             English strings
