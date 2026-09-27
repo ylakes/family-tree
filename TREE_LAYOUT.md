@@ -61,12 +61,16 @@ Every step only consumes the previous step's output — nothing feeds back.
    share a lane. Each gap is made just tall enough for its lanes, so rows
    with many families get taller and quiet rows stay compact.
 
-Rendering details: a single child whose box edge can meet the parents'
-drop point vertically gets a straight line with no horizontal jog;
-several families dropping from the same person, or into the same child,
-are nudged apart by a few pixels; a couple's drop point moves within the
-gap between their boxes to stay at least 10px from any other family's
-line in that gap.
+Rendering details: a couple's line to their children always starts at
+the middle of the line between the two partners. A single child whose box
+edge can be reached straight down from there gets a straight line, meeting
+the child's box within the middle half of its edge (so the line may land
+a little off the child's middle); otherwise the line takes a sideways
+step. Several families dropping from the same person, or into the same
+child, are nudged apart by a few pixels. Only where a couple's drop would
+run less than 10px beside another family's vertical line (checked after
+lanes are assigned, so only lines that really run side by side count)
+does it move along the couple's line just enough to keep them apart.
 
 Remaining crossings (`markCrossings`): wherever two different families'
 lines still cross, one is drawn with a small gap so it reads as running

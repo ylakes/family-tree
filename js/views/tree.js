@@ -1047,11 +1047,11 @@ const ViewTree = (() => {
         if (c.adjacent) {
           const [a, b] = c.tops;
           const [l, rr] = xAll.get(a) <= xAll.get(b) ? [a, b] : [b, a];
-          // Anywhere in the gap between the two boxes works as the drop
-          // point; lean toward the children to avoid a needless jog.
+          // The drop starts at the middle of the couple's line. [lo, hi] is
+          // how far it may move along that line, used only to keep it clear
+          // of another family's line in rare clashes (see below).
           const lo = xAll.get(l) + w(l) / 2 + 4, hi = xAll.get(rr) - w(rr) / 2 - 4;
-          const want = c.bottoms.length ? mean(c.bottoms.map((id) => xAll.get(id))) : (lo + hi) / 2;
-          c.topPts.push({ x: Math.min(hi, Math.max(lo, want)), mid: true, lo, hi, order: ci });
+          c.topPts.push({ x: (lo + hi) / 2, mid: true, lo, hi, order: ci });
         } else {
           c.tops.forEach((id) => c.topPts.push({ x: xAll.get(id), id, order: ci }));
         }
@@ -1060,33 +1060,50 @@ const ViewTree = (() => {
         c.botPts.forEach((p) => botPts.push(p));
       });
       // A family with one child and one attachment above needs no
-      // horizontal line at all if the two can meet vertically: the drop
-      // may attach anywhere along the middle half of a box edge.
+      // horizontal line at all if the two can meet vertically: a line may
+      // meet a box anywhere along the middle half of its edge. A couple's
+      // drop stays at the middle of their line, so only the child's end
+      // gives way; a single parent's drop (from their box) may move too.
       conns.forEach((c) => {
         if (c.topPts.length !== 1 || c.botPts.length !== 1) return;
-        const span = (p) => {
-          if (p.mid) return [p.lo, p.hi];
-          const it = itemInfo.get(p.id);
-          return [xAll.get(p.id) - it.w / 4, xAll.get(p.id) + it.w / 4];
+        const boxSpan = (id) => {
+          const it = itemInfo.get(id);
+          return [xAll.get(id) - it.w / 4, xAll.get(id) + it.w / 4];
         };
-        const [t0, t1] = span(c.topPts[0]), [b0, b1] = span(c.botPts[0]);
+        const top = c.topPts[0], bot = c.botPts[0];
+        const [t0, t1] = top.mid ? [top.x, top.x] : boxSpan(top.id);
+        const [b0, b1] = boxSpan(bot.id);
         const lo = Math.max(t0, b0), hi = Math.min(t1, b1);
         if (lo > hi) return;
-        const x = Math.min(hi, Math.max(lo, xAll.get(c.botPts[0].id)));
-        c.topPts[0].x = x; c.botPts[0].x = x;
-        c.straight = [lo, hi];
+        const x = Math.min(hi, Math.max(lo, xAll.get(bot.id)));
+        top.x = x; bot.x = x;
+        // How far a clash (further below) may move this straight line: along the
+        // couple's line, but only while it still meets the child's box.
+        c.straight = top.mid ? [Math.max(top.lo, b0), Math.min(top.hi, b1)] : [lo, hi];
       });
       spreadCoincident(topPts);
       spreadCoincident(botPts);
-      // A couple's drop point may sit anywhere in the gap between their
-      // boxes: move it (together with a straight single-child line) so it
-      // doesn't run right beside another family's line in this gap.
+      const setXs = () => conns.forEach((c) => { c.topXs = c.topPts.map((p) => p.x); c.botXs = c.botPts.map((p) => p.x); });
+      setXs();
+      let levels = assignLanes(conns);
+      // A couple's drop stays at the middle of their line unless it would
+      // run right beside another family's vertical line in this gap; then it
+      // moves along their line (with a straight single-child line) just
+      // enough. Checked once lanes are known, because two vertical lines
+      // only run side by side where their heights overlap: a drop from the
+      // parents' row spans row -> its own lane, a drop to a child spans its
+      // own lane -> next row.
+      let moved = false;
       conns.forEach((c) => {
         const p = c.topPts[0];
-        if (!p || !p.mid) return;
+        if (!p || !p.mid || c.level === undefined) return;
         const [lo, hi] = c.straight || [p.lo, p.hi];
         const others = [];
-        conns.forEach((o) => { if (o !== c) [...o.topPts, ...o.botPts].forEach((q) => others.push(q.x)); });
+        conns.forEach((o) => {
+          if (o === c || o.level === undefined) return;
+          o.topPts.forEach((q) => others.push(q.x));
+          if (o.level < c.level || c.straight) o.botPts.forEach((q) => others.push(q.x));
+        });
         const clearance = (x) => others.reduce((m, ox) => Math.min(m, Math.abs(ox - x)), Infinity);
         if (clearance(p.x) >= MIN_LINE_DISTANCE) return;
         let best = p.x, bestScore = -Infinity;
@@ -1094,11 +1111,13 @@ const ViewTree = (() => {
           const score = Math.min(clearance(x), MIN_LINE_DISTANCE) * 1000 - Math.abs(x - p.x);
           if (score > bestScore) { bestScore = score; best = x; }
         }
+        if (best === p.x) return;
         p.x = best;
         if (c.straight) c.botPts[0].x = best;
+        moved = true;
       });
-      conns.forEach((c) => { c.topXs = c.topPts.map((p) => p.x); c.botXs = c.botPts.map((p) => p.x); });
-      gapLevels.set(r, assignLanes(conns));
+      if (moved) { setXs(); levels = assignLanes(conns); }
+      gapLevels.set(r, levels);
     });
 
     // Row y positions: each gap just tall enough for its lanes.
