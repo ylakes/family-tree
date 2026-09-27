@@ -12,7 +12,7 @@
 // connecting line stays perfectly horizontal — width is what flexes to fit
 // each name.
 const ViewTree = (() => {
-  const PHOTO_D = 44, PAD = 12, GAP = 10, NODE_H = 72;
+  const PHOTO_D = 44, PAD = 12, GAP = 10, NODE_H = 72, VIEW_MARGIN = 12;
   const MIN_TEXT_W = 90, TEXT_BUFFER = 10;
   let transform = { x: 40, y: 40, scale: 1 };
   let dragState = null, dragMoved = false;
@@ -1280,7 +1280,11 @@ const ViewTree = (() => {
       </g>`;
     }).join('');
 
-    svg.setAttribute('viewBox', `0 0 ${Math.max(totalWidth, 400)} ${Math.max(totalHeight, 300)}`);
+    // A small margin around the drawing: box outlines and lines are centered
+    // on their edges, so without it the outermost ones would be half clipped
+    // (most visibly in print/PDF, where nothing can be panned into view).
+    const m = VIEW_MARGIN;
+    svg.setAttribute('viewBox', `${-m} ${-m} ${Math.max(totalWidth, 400) + 2 * m} ${Math.max(totalHeight, 300) + 2 * m}`);
     svg.innerHTML = `
       <defs><clipPath id="tree-photo-clip"><circle cx="${photoR}" cy="${photoR}" r="${photoR}" transform="translate(${PAD},${NODE_H / 2 - photoR})"/></clipPath></defs>
       <g id="tree-viewport">${linksHtml.join('')}${hitHtml.join('')}${nodesHtml}</g>`;
@@ -1297,15 +1301,9 @@ const ViewTree = (() => {
     container.querySelector('#zoom-in').onclick = () => { transform.scale = Math.min(3, transform.scale * 1.2); applyTransform(svg); };
     container.querySelector('#zoom-out').onclick = () => { transform.scale = Math.max(0.2, transform.scale / 1.2); applyTransform(svg); };
     container.querySelector('#reset-view').onclick = () => { transform = { x: 40, y: 40, scale: 1 }; applyTransform(svg); };
+    // The print stylesheet ignores the on-screen pan/zoom (css/print.css),
+    // so printing shows the whole tree whether started here or with Ctrl/Cmd+P.
     container.querySelector('#btn-print').onclick = () => {
-      // The viewBox is sized to exactly match the tree's content bounding
-      // box (0,0 to totalWidth,totalHeight) — any non-zero pan offset here
-      // pushes that same amount of content past the viewBox's far edge,
-      // clipping it in the printed/PDF output (but not on-screen, since the
-      // wrap element there scrolls/overflows instead of clipping to a
-      // fixed page). Must be the identity transform for print.
-      transform = { x: 0, y: 0, scale: 1 };
-      applyTransform(svg);
       clearHighlight();
       window.print();
     };

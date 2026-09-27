@@ -3,7 +3,7 @@
 @media print {
   @page { margin: 1.5cm; }
 
-  body { background: white; }
+  html, body { background: white; }
 
   .no-print, .app-header, .modal-root { display: none !important;}
 
@@ -26,6 +26,13 @@
     width: 100%;
     height: auto;
   }
+  /* The whole tree, regardless of the on-screen pan/zoom or highlight: the
+     viewBox already frames exactly the tree (plus a small margin), and any
+     pan offset would push part of it off the page. */
+  #tree-viewport { transform: none !important; }
+  #tree-svg.is-highlighting .tree-link,
+  #tree-svg.is-highlighting .tree-node { opacity: 1 !important; }
+  .tree-link.is-hl { stroke: var(--color-deceased) !important; stroke-width: 1.5px !important; }
 
   table.data-table { font-size: 11px; }
   table.data-table th, table.data-table td { padding: 4px 6px; }
