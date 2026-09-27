@@ -1438,8 +1438,20 @@ const ViewTree = (() => {
       transform.scale = Math.min(3, Math.max(0.2, transform.scale * delta));
       applyTransform(svg);
     };
+    // Pan by dragging. The drawing is scaled to fit the canvas (its viewBox),
+    // so a mouse move in screen pixels is converted to drawing units —
+    // otherwise a wide tree would crawl along at a fraction of the cursor's
+    // speed. preventDefault stops the browser from selecting names while
+    // dragging (clicks on people and lines still fire normally).
+    let frame = null;
     wrap.onmousedown = (e) => {
-      dragState = { startX: e.clientX, startY: e.clientY, origX: transform.x, origY: transform.y };
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const ctm = svg.getScreenCTM();
+      dragState = {
+        startX: e.clientX, startY: e.clientY, origX: transform.x, origY: transform.y,
+        unitsPerPx: ctm && ctm.a ? 1 / ctm.a : 1,
+      };
       dragMoved = false;
       wrap.classList.add('dragging');
     };
@@ -1448,9 +1460,9 @@ const ViewTree = (() => {
       // A click that ends a drag isn't a click on whatever is under the
       // pointer (e.g. it mustn't open a person or pin a highlight).
       if (Math.abs(e.clientX - dragState.startX) + Math.abs(e.clientY - dragState.startY) > 4) dragMoved = true;
-      transform.x = dragState.origX + (e.clientX - dragState.startX);
-      transform.y = dragState.origY + (e.clientY - dragState.startY);
-      applyTransform(svg);
+      transform.x = dragState.origX + (e.clientX - dragState.startX) * dragState.unitsPerPx;
+      transform.y = dragState.origY + (e.clientY - dragState.startY) * dragState.unitsPerPx;
+      if (!frame) frame = requestAnimationFrame(() => { frame = null; applyTransform(svg); });
     };
     onMouseUp = () => {
       dragState = null;

@@ -272,6 +272,7 @@ button.person-photo--clickable:hover { box-shadow: 0 0 0 3px var(--color-hover);
   box-shadow: var(--shadow);
   cursor: grab;
 }
+.tree-canvas-wrap { user-select: none; -webkit-user-select: none; }
 .tree-canvas-wrap.dragging { cursor: grabbing; }
 .tree-canvas-wrap svg { width: 100%; height: 100%; display: block; }
 /* Tree nodes are plain SVG shapes (not HTML-in-foreignObject) so the frame
