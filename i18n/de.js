@@ -3,7 +3,8 @@ window.I18N_DATA.de = {
   "app": {
     "title": "Familienstammbaum",
     "saving": "Speichern…",
-    "saved": "Gespeichert"
+    "saved": "Gespeichert",
+    "backupSaved": "Sicherung des vorherigen Stammbaums gespeichert als {file}"
   },
   "nav": {
     "focus": "Personen",
@@ -32,7 +33,9 @@ window.I18N_DATA.de = {
     "addChild": "Kind hinzufügen",
     "addPartner": "Partner hinzufügen",
     "viewPerson": "Anzeigen",
-    "print": "Drucken"
+    "print": "Drucken",
+    "more": "Mehr",
+    "continue": "Weiter"
   },
   "landing": {
     "heading": "",
@@ -45,7 +48,17 @@ window.I18N_DATA.de = {
     "unsupportedBrowser": "Diese App benötigt einen Chromium-basierten Browser (Chrome, Edge, Brave oder Opera) mit Unterstützung für die File System Access API.",
     "reconnectBody": "",
     "reconnectButton": "Mit bestehendem Stammbaum fortfahren",
-    "useDifferentFolder": "Anderen Stammbaum verwenden"
+    "useDifferentFolder": "Anderen Stammbaum verwenden",
+    "backToCurrent": "Zurück zum aktuellen Stammbaum",
+    "backupNote": "Bevor der aktuelle Stammbaum ersetzt wird, wird eine Sicherung davon im Ordner „database“ gespeichert."
+  },
+  "menu": {
+    "startOver": "Neuen Stammbaum beginnen oder anderen öffnen…",
+    "exportCopy": "Kopie exportieren…"
+  },
+  "startOver": {
+    "title": "Neuen Stammbaum beginnen oder anderen öffnen",
+    "body": "Auf dem nächsten Bildschirm kannst du einen neuen, leeren Stammbaum anlegen oder eine andere Stammbaum-Datei importieren. Dein aktueller Stammbaum ({count} Personen) wird nicht gelöscht: Bevor er ersetzt wird, wird eine Sicherungskopie davon im Ordner „database“ gespeichert."
   },
   "person": {
     "firstName": "Vorname",

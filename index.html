@@ -27,13 +27,19 @@
           <path d="M7 21v-7h10v7"/>
         </svg>
       </button>
-      <button id="btn-export" class="icon-btn" type="button">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 3v11"/>
-          <path d="M8 7l4-4 4 4"/>
-          <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>
-        </svg>
-      </button>
+      <div class="header-menu">
+        <button id="btn-menu" class="icon-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none">
+            <circle cx="5" cy="12" r="1.8"/>
+            <circle cx="12" cy="12" r="1.8"/>
+            <circle cx="19" cy="12" r="1.8"/>
+          </svg>
+        </button>
+        <div id="header-menu-list" class="header-menu__list hidden" role="menu">
+          <button type="button" role="menuitem" id="menu-start-over"></button>
+          <button type="button" role="menuitem" id="menu-export"></button>
+        </div>
+      </div>
     </div>
   </header>
 

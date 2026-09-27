@@ -52,8 +52,8 @@ for that; click it and you're in.
 - The disk icon in the header (or `Ctrl/Cmd+S`) re-saves manually — mostly
   useful as a way to retry if autosave ever fails (e.g. folder permission
   was revoked mid-session), since it's otherwise redundant with autosave.
-- The export icon opens a picker to write a one-off copy of your data
-  anywhere you choose, without changing where autosave writes to. Handy for
+- **Export a copy…** in the header's "⋯" menu opens a picker to write a
+  one-off copy of your data anywhere you choose, without changing where autosave writes to. Handy for
   sending someone a copy or dropping a dated backup snapshot.
 - If a save is still in flight, the browser will warn you if you try to
   close the tab before it finishes — with autosave this window is normally
@@ -78,13 +78,30 @@ zipped email attachment all work identically — nothing needs installing.
 Because the data is a single JSON file, backing up is just keeping copies
 of that file. Two easy habits:
 
-- Use the export icon periodically to drop a dated snapshot next to your
-  working file (or move those snapshots to a separate backups folder).
+- Use **Export a copy…** (header "⋯" menu) periodically to drop a dated
+  snapshot next to your working file (or move those snapshots to a
+  separate backups folder).
 - Before major edits (a big reorganization, bulk deletes), make a manual
   copy of `database/family-data.json`.
 
 Photos are embedded as base64 directly inside the JSON, so a single file
 copy is a complete backup — there's no separate photos folder to remember.
+
+## Starting over or switching to another family tree
+
+Choose **Start new or open another family tree…** in the header's "⋯"
+menu and confirm. You're taken back to the start screen, where you can
+**Create new family tree** (empty) or **Import existing family tree**
+(any `family-data.json`, e.g. one someone sent you). **Back to current
+family tree** leaves without changing anything.
+
+Nothing is lost either way: right before the new or imported tree
+replaces the current one, the current file is copied to a dated backup
+next to it, e.g. `database/family-data-backup-2026-09-27-143005.json`
+(an empty tree isn't backed up). To go back to a previous tree later,
+import that backup file the same way. Backups are never deleted
+automatically — remove old ones from the `database` folder yourself when
+you no longer need them.
 
 ## Adding a second language
 

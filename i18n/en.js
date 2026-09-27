@@ -3,7 +3,8 @@ window.I18N_DATA.en = {
   "app": {
     "title": "Family Tree",
     "saving": "Saving…",
-    "saved": "Saved"
+    "saved": "Saved",
+    "backupSaved": "Backup of the previous family tree saved as {file}"
   },
   "nav": {
     "focus": "People",
@@ -32,7 +33,9 @@ window.I18N_DATA.en = {
     "addChild": "Add Child",
     "addPartner": "Add Partner",
     "viewPerson": "View",
-    "print": "Print"
+    "print": "Print",
+    "more": "More",
+    "continue": "Continue"
   },
   "landing": {
     "heading": "",
@@ -45,7 +48,17 @@ window.I18N_DATA.en = {
     "unsupportedBrowser": "This app requires a Chromium-based browser (Chrome, Edge, Brave, or Opera) with support for the File System Access API.",
     "reconnectBody": "",
     "reconnectButton": "Continue with existing family tree",
-    "useDifferentFolder": "Use a different family tree"
+    "useDifferentFolder": "Use a different family tree",
+    "backToCurrent": "Back to current family tree",
+    "backupNote": "A backup of the current family tree is saved in the database folder before it is replaced."
+  },
+  "menu": {
+    "startOver": "Start new or open another family tree…",
+    "exportCopy": "Export a copy…"
+  },
+  "startOver": {
+    "title": "Start new or open another family tree",
+    "body": "On the next screen you can create a new, empty family tree or import another family tree file. Your current family tree ({count} people) is not deleted: before it is replaced, a backup copy of it is saved in the database folder."
   },
   "person": {
     "firstName": "First Name",

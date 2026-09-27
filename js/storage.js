@@ -189,6 +189,36 @@ const Storage = (() => {
     await writable.close();
   }
 
+  // Copies the current family-data.json (if there is one with content) to
+  // a dated backup file next to it, e.g.
+  // database/family-data-backup-2026-09-27-143005.json — called right
+  // before a new or imported tree replaces it, so starting over can never
+  // lose data. Returns the backup's file name, or null if there was
+  // nothing to back up.
+  async function backupDataFile() {
+    if (!dirHandle) return null;
+    const dataDir = await getDataDirHandle();
+    const current = await dataDir.getFileHandle(DATA_FILENAME, { create: false }).catch(() => null);
+    if (!current) return null;
+    const text = await (await current.getFile()).text();
+    if (!text.trim()) return null;
+    // An empty tree has nothing worth keeping. Anything unreadable is still
+    // backed up — better one file too many than a lost one.
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && parsed.people && Object.keys(parsed.people).length === 0) return null;
+    } catch { /* keep going: back it up as-is */ }
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const name = `family-data-backup-${stamp}.json`;
+    const backupHandle = await dataDir.getFileHandle(name, { create: true });
+    const writable = await backupHandle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return name;
+  }
+
   async function forgetFolder() {
     dirHandle = null;
     await idbDelete(DIR_KEY).catch(() => {});
@@ -196,7 +226,7 @@ const Storage = (() => {
 
   return {
     isSupported, tryReconnect, reconnect, hasFolder, pickAppFolder,
-    readDataFile, writeDataFile, pickExternalFileToImport, saveCopyAs,
+    readDataFile, writeDataFile, backupDataFile, pickExternalFileToImport, saveCopyAs,
     forgetFolder,
   };
 })();

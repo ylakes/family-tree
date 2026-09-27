@@ -25,13 +25,17 @@ const ViewLanding = (() => {
             <span>${t('landing.importExistingHint')}</span>
           </button>
         </div>
-        <p class="landing-note">${t('landing.folderNote')}</p>
+        <p class="landing-note">${t(opts.onBack ? 'landing.backupNote' : 'landing.folderNote')}</p>
+        ${opts.onBack ? `<button class="btn--link" id="btn-back-current">${t('landing.backToCurrent')}</button>` : ''}
         <div id="landing-error" class="landing-error"></div>
       </div>`;
     errorEl = container.querySelector('#landing-error');
     if (opts.error) errorEl.textContent = opts.error;
     container.querySelector('#btn-create-new').onclick = opts.onCreate;
     container.querySelector('#btn-import-existing').onclick = opts.onImport;
+    // Only when an open family tree sent us here ("Start new or open
+    // another family tree" in the header menu): leave without changes.
+    if (opts.onBack) container.querySelector('#btn-back-current').onclick = opts.onBack;
   }
 
   // A previously-used folder was found but needs one click to reconfirm

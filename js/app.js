@@ -142,6 +142,7 @@ const App = (() => {
     ViewLanding.render(document.getElementById('landing-screen'), {
       onCreate: handleCreateNew,
       onImport: handleImportExisting,
+      onBack: opts.onBack,
       error: opts.error,
     });
   }
@@ -165,9 +166,11 @@ const App = (() => {
   async function handleCreateNew() {
     try {
       if (!Storage.hasFolder()) await Storage.pickAppFolder();
+      const backup = await Storage.backupDataFile();
       await Storage.writeDataFile(DataModel.createEmptyData());
       const data = await Storage.readDataFile();
-      onDataReady(data, true);
+      onDataReady(data, false);
+      announceBackup(backup);
     } catch (err) {
       if (err.name !== 'AbortError') ViewLanding.showError(err.message);
     }
@@ -177,8 +180,10 @@ const App = (() => {
     try {
       const imported = await Storage.pickExternalFileToImport();
       if (!Storage.hasFolder()) await Storage.pickAppFolder();
+      const backup = await Storage.backupDataFile();
       await Storage.writeDataFile(imported);
       onDataReady(imported, false);
+      announceBackup(backup);
     } catch (err) {
       if (err.name !== 'AbortError') ViewLanding.showError(err.message);
     }
@@ -193,7 +198,7 @@ const App = (() => {
     document.getElementById('app-title').textContent = appTitle();
     labelIconButtons();
     document.getElementById('btn-save').onclick = save;
-    document.getElementById('btn-export').onclick = exportCopy;
+    wireHeaderMenu();
     buildNav();
     buildLangSwitcher();
     markDirty(isNew);
@@ -238,9 +243,66 @@ const App = (() => {
     const save = document.getElementById('btn-save');
     save.title = t('actions.save');
     save.setAttribute('aria-label', t('actions.save'));
-    const exportBtn = document.getElementById('btn-export');
-    exportBtn.title = t('actions.export');
-    exportBtn.setAttribute('aria-label', t('actions.export'));
+    const menuBtn = document.getElementById('btn-menu');
+    menuBtn.title = t('actions.more');
+    menuBtn.setAttribute('aria-label', t('actions.more'));
+    document.getElementById('menu-start-over').textContent = t('menu.startOver');
+    document.getElementById('menu-export').textContent = t('menu.exportCopy');
+  }
+
+  // The "⋯" menu in the header. The list closes on any click outside it
+  // and on Escape.
+  let headerMenuWired = false;
+  function wireHeaderMenu() {
+    const btn = document.getElementById('btn-menu');
+    const list = document.getElementById('header-menu-list');
+    const setOpen = (open) => {
+      list.classList.toggle('hidden', !open);
+      btn.setAttribute('aria-expanded', String(open));
+    };
+    btn.onclick = (e) => { e.stopPropagation(); setOpen(list.classList.contains('hidden')); };
+    document.getElementById('menu-start-over').onclick = () => { setOpen(false); confirmStartOver(); };
+    document.getElementById('menu-export').onclick = () => { setOpen(false); exportCopy(); };
+    if (headerMenuWired) return;
+    headerMenuWired = true;
+    document.addEventListener('click', (e) => { if (!e.target.closest('.header-menu')) setOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
+  }
+
+  // "Start new or open another family tree": after confirming, the start
+  // screen (create / import) is shown again. Nothing is replaced until one
+  // of those is actually chosen, and handleCreateNew/handleImportExisting
+  // back the current file up first; until then "Back to current family
+  // tree" returns to it unchanged.
+  function confirmStartOver() {
+    const count = Object.keys(state.data.people).length;
+    openModal((box) => {
+      box.innerHTML = `
+        <h3>${t('startOver.title')}</h3>
+        <p>${t('startOver.body', { count })}</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="start-over-cancel">${t('actions.cancel')}</button>
+          <button type="button" class="btn btn--primary" id="start-over-continue">${t('actions.continue')}</button>
+        </div>`;
+      box.querySelector('#start-over-cancel').onclick = closeModal;
+      box.querySelector('#start-over-continue').onclick = async () => {
+        closeModal();
+        // Make sure the latest edits are on disk before they get backed up.
+        if (state.dirty) await queueSave(); else await saveChain;
+        showLanding({ onBack: returnToCurrentTree });
+        document.getElementById('app-shell').classList.add('hidden');
+        document.getElementById('landing-screen').classList.remove('hidden');
+      };
+    });
+  }
+
+  function returnToCurrentTree() {
+    document.getElementById('landing-screen').classList.add('hidden');
+    document.getElementById('app-shell').classList.remove('hidden');
+  }
+
+  function announceBackup(fileName) {
+    if (fileName) showStatus(t('app.backupSaved', { file: fileName }), 8000);
   }
 
   // Settings live in js/settings.js (window.AppSettings.visibleTabs), edited

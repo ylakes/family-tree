@@ -3,7 +3,8 @@ window.I18N_DATA.it = {
   "app": {
     "title": "Albero Genealogico",
     "saving": "Salvataggio…",
-    "saved": "Salvato"
+    "saved": "Salvato",
+    "backupSaved": "Backup dell'albero precedente salvato come {file}"
   },
   "nav": {
     "focus": "Persone",
@@ -32,7 +33,9 @@ window.I18N_DATA.it = {
     "addChild": "Aggiungi Figlio",
     "addPartner": "Aggiungi Partner",
     "viewPerson": "Visualizza",
-    "print": "Stampa"
+    "print": "Stampa",
+    "more": "Altro",
+    "continue": "Continua"
   },
   "landing": {
     "heading": "",
@@ -45,7 +48,17 @@ window.I18N_DATA.it = {
     "unsupportedBrowser": "Questa app richiede un browser basato su Chromium (Chrome, Edge, Brave o Opera) con supporto per la File System Access API.",
     "reconnectBody": "",
     "reconnectButton": "Continua con l'albero genealogico esistente",
-    "useDifferentFolder": "Usa un altro albero genealogico"
+    "useDifferentFolder": "Usa un altro albero genealogico",
+    "backToCurrent": "Torna all'albero attuale",
+    "backupNote": "Prima di sostituire l'albero attuale, ne viene salvato un backup nella cartella «database»."
+  },
+  "menu": {
+    "startOver": "Inizia un nuovo albero o aprine un altro…",
+    "exportCopy": "Esporta una copia…"
+  },
+  "startOver": {
+    "title": "Inizia un nuovo albero o aprine un altro",
+    "body": "Nella schermata successiva puoi creare un nuovo albero genealogico vuoto o importare un altro file. L'albero attuale ({count} persone) non viene eliminato: prima di sostituirlo, ne viene salvata una copia di backup nella cartella «database»."
   },
   "person": {
     "firstName": "Nome",

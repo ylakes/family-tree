@@ -132,6 +132,18 @@ button, input, select, textarea { font-family: inherit; font-size: 1rem; }
 .main-nav button.active { background: var(--color-accent); color: var(--color-on-accent); }
 .app-header__actions { display: flex; gap: 8px; align-items: center; }
 .lang-switcher { padding: 6px; border-radius: var(--radius); border: 1px solid var(--color-border); }
+.header-menu { position: relative; }
+.header-menu__list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  display: flex; flex-direction: column; padding: 6px;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius); box-shadow: var(--modal-box-shadow);
+}
+.header-menu__list button {
+  padding: 9px 12px; border: none; border-radius: var(--radius);
+  background: none; color: var(--color-text); font: inherit; text-align: left; white-space: nowrap; cursor: pointer;
+}
+.header-menu__list button:hover, .header-menu__list button:focus-visible { background: var(--color-hover); }
 
 .view-root { flex: 1; padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
 .view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
